@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import os
 from pathlib import Path
 from typing import Dict, Iterable, List
+
+logger = logging.getLogger(__name__)
 
 
 HIGHLIGHT_CATEGORIES = [
@@ -39,16 +42,33 @@ class VisionAnalyzer:
             else:
                 self.provider = "heuristic"
 
+        if self.provider == "openai" and not self.openai_api_key:
+            logger.warning("[VisionAnalyzer] provider=openai but no API key — using heuristic fallback.")
+            self.provider = "heuristic"
+        if self.provider == "anthropic" and not self.anthropic_api_key:
+            logger.warning("[VisionAnalyzer] provider=anthropic but no API key — using heuristic fallback.")
+            self.provider = "heuristic"
+
     def analyze_frames(self, frame_samples: Iterable[dict]) -> List[dict]:
         frame_samples = list(frame_samples)
         total = len(frame_samples)
         analyses = []
         for index, sample in enumerate(frame_samples, start=1):
-            print(
-                f"    Analyzing frame {index}/{total} at {sample.get('timestamp', 0)}s "
+            message = (
+                f"Analyzing frame {index}/{total} at {sample.get('timestamp', 0)}s "
                 f"with {self.provider}..."
             )
+            print(f"    {message}")
+            logger.info("[VisionAnalyzer] %s", message)
             analyses.append(self.analyze_frame(sample))
+
+        provider_errors = [item.get("provider_error") for item in analyses if item.get("provider_error")]
+        if provider_errors:
+            logger.warning(
+                "[VisionAnalyzer] %s frame(s) fell back to heuristic due to API errors.",
+                len(provider_errors),
+            )
+            logger.warning("[VisionAnalyzer] First API error: %s", provider_errors[0])
         return analyses
 
     def analyze_frame(self, sample: dict) -> dict:
@@ -58,6 +78,7 @@ class VisionAnalyzer:
             except Exception as exc:  # noqa: BLE001 - keep pipeline usable if API fails.
                 fallback = self._heuristic_analysis(sample)
                 fallback["provider_error"] = f"openai failed: {exc}"
+                logger.warning("[VisionAnalyzer] OpenAI failed at %.2fs: %s", sample.get("timestamp", 0), exc)
                 return fallback
 
         if self.provider == "anthropic" and self.anthropic_api_key:
@@ -66,6 +87,7 @@ class VisionAnalyzer:
             except Exception as exc:  # noqa: BLE001
                 fallback = self._heuristic_analysis(sample)
                 fallback["provider_error"] = f"anthropic failed: {exc}"
+                logger.warning("[VisionAnalyzer] Anthropic failed at %.2fs: %s", sample.get("timestamp", 0), exc)
                 return fallback
 
         return self._heuristic_analysis(sample)

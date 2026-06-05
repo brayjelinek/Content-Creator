@@ -143,15 +143,17 @@ def cut_clip(
 ) -> None:
     """Extract a highlight segment while preserving audio when available."""
     settings = merge_render_config(render_config)
+    safe_start = max(float(start), 0)
+    safe_duration = max(float(duration), 1)
     command = [
         "ffmpeg",
         "-y",
-        "-ss",
-        f"{max(float(start), 0):.2f}",
         "-i",
         str(video_path),
+        "-ss",
+        f"{safe_start:.2f}",
         "-t",
-        f"{max(float(duration), 1):.2f}",
+        f"{safe_duration:.2f}",
         "-map",
         "0:v:0",
         "-map",
@@ -394,7 +396,7 @@ def format_font_path(path: str) -> str:
 
 
 def get_video_duration(video_path: str | Path) -> float:
-    """Return media duration in seconds using ffprobe."""
+    """Return media duration in seconds using ffprobe with OpenCV fallback."""
     _ensure_ffprobe()
     command = [
         "ffprobe",
@@ -407,9 +409,41 @@ def get_video_duration(video_path: str | Path) -> float:
         str(video_path),
     ]
     result = _run_ffmpeg(command, stage="get_video_duration")
+    raw = result.stdout.strip()
+    if not raw:
+        logger.warning("[FFmpeg] ffprobe returned empty duration for %s", video_path)
+        return _opencv_duration_fallback(video_path)
+
     try:
-        return float(result.stdout.strip())
+        duration = float(raw)
     except ValueError:
+        logger.warning("[FFmpeg] Could not parse duration %r for %s", raw, video_path)
+        return _opencv_duration_fallback(video_path)
+
+    if duration <= 0:
+        logger.warning("[FFmpeg] Non-positive duration %.2fs for %s", duration, video_path)
+        return _opencv_duration_fallback(video_path)
+
+    return duration
+
+
+def _opencv_duration_fallback(video_path: str | Path) -> float:
+    """Fallback duration probe when ffprobe fails."""
+    try:
+        import cv2
+
+        cap = cv2.VideoCapture(str(video_path))
+        if not cap.isOpened():
+            logger.error("[FFmpeg] OpenCV could not open video for duration fallback: %s", video_path)
+            return 0.0
+        fps = cap.get(cv2.CAP_PROP_FPS) or 30
+        frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+        cap.release()
+        duration = frame_count / fps if frame_count else 0.0
+        logger.info("[FFmpeg] OpenCV duration fallback for %s: %.2fs", video_path, duration)
+        return duration
+    except Exception as exc:  # noqa: BLE001
+        logger.error("[FFmpeg] Duration fallback failed for %s: %s", video_path, exc)
         return 0.0
 
 

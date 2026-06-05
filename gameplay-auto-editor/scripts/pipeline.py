@@ -12,6 +12,7 @@ from typing import Any, Dict
 
 from dotenv import load_dotenv
 
+from scripts.pipeline_validation import preflight_pipeline
 from scripts.caption_generator import generate_captions
 from scripts.clip_cutter import get_video_duration, process_highlights
 from scripts.frame_extractor import extract_frames
@@ -63,6 +64,12 @@ def run_pipeline(
     log_path = setup_pipeline_logging(paths["logs"], video_stem)
     logger.info("[Pipeline] Writing logs to %s", log_path)
 
+    preflight = preflight_pipeline(input_video, config.get("rendering", {}))
+    if not preflight["ok"]:
+        message = "; ".join(preflight["errors"])
+        logger.error("[Pipeline] Preflight failed: %s", message)
+        raise RuntimeError(message)
+
     frame_dir = paths["processed"] / "frames" / video_stem
     report_dir = paths["processed"] / "reports"
     report_dir.mkdir(parents=True, exist_ok=True)
@@ -103,9 +110,11 @@ def run_pipeline(
             "input_video": str(input_video),
             "duration_seconds": round(duration, 2),
             "frames_analyzed": len(frame_samples),
+            "highlights_detected": 0,
             "clips_created": 0,
             "clips": [],
             "log_file": str(log_path),
+            "failure_reason": "no_highlights",
         }
         _write_json(report_dir / f"{video_stem}_run_report.json", report)
         logger.warning("[Pipeline] Final clips generated: 0")
@@ -148,16 +157,26 @@ def run_pipeline(
         )
 
     logger.info("[Pipeline] Final clips generated: %s", len(rendered))
+    failure_reason = None
     if len(rendered) == 0:
+        failure_reason = "render_failed"
         logger.warning("[Pipeline] No clips were generated — check logs above.")
+        if highlights:
+            logger.warning(
+                "[Pipeline] %s highlight(s) were detected but rendering produced zero clips. "
+                "See [FFmpeg] errors in the log.",
+                len(highlights),
+            )
 
     report = {
         "input_video": str(input_video),
         "duration_seconds": round(duration, 2),
         "frames_analyzed": len(frame_samples),
+        "highlights_detected": len(highlights),
         "clips_created": len(rendered),
         "clips": rendered,
         "log_file": str(log_path),
+        "failure_reason": failure_reason,
     }
     _write_json(report_dir / f"{video_stem}_run_report.json", report)
     return report

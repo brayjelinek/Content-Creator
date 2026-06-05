@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import List
 
 import cv2
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -42,22 +45,31 @@ def extract_frames(
     fps = cap.get(cv2.CAP_PROP_FPS) or 30
     frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
     duration = frame_count / fps if frame_count else 0
+    logger.info("[FrameExtractor] Video %.2fs @ %.2ffps (%s frames)", duration, fps, frame_count)
 
     sample_times = _build_sample_times(duration, interval_seconds, max_frames)
+    logger.info("[FrameExtractor] Sampling %s timestamp(s)", len(sample_times))
     samples: List[FrameSample] = []
     previous_gray: np.ndarray | None = None
+    skipped = 0
 
     for index, timestamp in enumerate(sample_times):
-        cap.set(cv2.CAP_PROP_POS_MSEC, timestamp * 1000)
+        frame_index = int(round(timestamp * fps))
+        cap.set(cv2.CAP_PROP_POS_FRAMES, max(frame_index, 0))
         ok, frame = cap.read()
         if not ok:
+            cap.set(cv2.CAP_PROP_POS_MSEC, timestamp * 1000)
+            ok, frame = cap.read()
+        if not ok:
+            skipped += 1
+            logger.warning("[FrameExtractor] Could not read frame at %.2fs (index %s)", timestamp, frame_index)
             continue
 
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         small_gray = cv2.resize(gray, (160, 90), interpolation=cv2.INTER_AREA)
 
         if previous_gray is None:
-            motion_score = 0.0
+            motion_score = float(np.mean(small_gray)) * 0.01
         else:
             diff = cv2.absdiff(small_gray, previous_gray)
             motion_score = float(np.mean(diff))
@@ -65,7 +77,6 @@ def extract_frames(
 
         brightness = float(np.mean(gray))
         sharpness = float(cv2.Laplacian(gray, cv2.CV_64F).var())
-        frame_index = int(round(timestamp * fps))
         frame_file = output_dir / f"frame_{index:04d}_{timestamp:.2f}s.jpg"
 
         cv2.imwrite(
@@ -86,6 +97,10 @@ def extract_frames(
         )
 
     cap.release()
+
+    if skipped:
+        logger.warning("[FrameExtractor] Skipped %s unreadable frame sample(s)", skipped)
+    logger.info("[FrameExtractor] Extracted %s usable frame sample(s)", len(samples))
     return [asdict(sample) for sample in samples]
 
 

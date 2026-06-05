@@ -45,6 +45,7 @@ DEFAULT_RENDER_CONFIG: dict[str, Any] = {
     "hook_max_lines": 2,
     "caption_max_chars": 40,
     "caption_max_lines": 3,
+    "add_hashtags_to_overlay": False,
 }
 
 

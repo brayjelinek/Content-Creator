@@ -17,10 +17,14 @@ def setup_pipeline_logging(log_dir: Path, video_stem: str) -> Path:
 
     formatter = logging.Formatter("%(message)s")
 
-    if not any(isinstance(handler, logging.FileHandler) for handler in root.handlers):
-        file_handler = logging.FileHandler(log_path, encoding="utf-8")
-        file_handler.setFormatter(formatter)
-        root.addHandler(file_handler)
+    for handler in root.handlers[:]:
+        if isinstance(handler, logging.FileHandler):
+            root.removeHandler(handler)
+            handler.close()
+
+    file_handler = logging.FileHandler(log_path, encoding="utf-8")
+    file_handler.setFormatter(formatter)
+    root.addHandler(file_handler)
 
     if not any(isinstance(handler, logging.StreamHandler) for handler in root.handlers):
         stream_handler = logging.StreamHandler()

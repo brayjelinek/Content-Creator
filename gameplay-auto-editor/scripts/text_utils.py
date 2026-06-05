@@ -12,7 +12,6 @@ def sanitize_overlay_text(text: str) -> str:
     cleaned = cleaned.replace("'", "")
     cleaned = cleaned.replace(":", " ")
     cleaned = cleaned.replace(";", " ")
-    cleaned = cleaned.replace(",", " ")
     cleaned = cleaned.replace("\\", " ")
     cleaned = cleaned.replace("%", " percent")
     cleaned = cleaned.replace("[", "(").replace("]", ")")
@@ -70,6 +69,9 @@ def validate_filter_chain(filter_chain: str) -> None:
             raise ValueError(f"Font path contains unescaped colon: {raw_path}")
         if "//" in normalized.replace("\\:", ":"):
             raise ValueError(f"Font path contains invalid slashes: {raw_path}")
+
+    if re.search(r"x=max\(\d+,min\(", filter_chain):
+        raise ValueError("Filter chain contains unescaped commas in drawtext x expressions.")
 
 
 def looks_like_uuid(value: str) -> bool:

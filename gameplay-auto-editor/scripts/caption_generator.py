@@ -17,6 +17,7 @@ CATEGORY_HOOKS = {
     "high-action sequences": "Blink and you miss it",
     "fast movement or chaos": "Pure chaos",
     "emotional reactions": "The reaction says it all",
+    "setup moment": "Wait for it",
 }
 
 DEFAULT_HASHTAGS = "#gaming #highlights #shorts #clips"
@@ -34,6 +35,7 @@ def generate_captions(
     settings = merge_render_config(render_config)
     caption_max_chars = int(settings.get("caption_max_chars", 40))
     caption_max_lines = int(settings.get("caption_max_lines", 3))
+    overlay_hashtags = bool(settings.get("add_hashtags_to_overlay", False))
     display_name = _display_video_name(video_name)
     captioned = []
 
@@ -41,13 +43,16 @@ def generate_captions(
         categories = [str(category) for category in highlight.get("categories", [])]
         score = float(highlight.get("score", 0))
         hook = sanitize_overlay_text(_pick_hook(categories, score))
-        caption_body = sanitize_overlay_text(_caption_text(highlight, display_name, score))
+        overlay_body = sanitize_overlay_text(_overlay_caption_text(highlight, score))
+        social_body = sanitize_overlay_text(_social_caption_text(highlight, display_name, score))
 
         if add_hashtags:
-            caption_body = sanitize_overlay_text(f"{caption_body} {DEFAULT_HASHTAGS}")
+            social_body = sanitize_overlay_text(f"{social_body} {DEFAULT_HASHTAGS}")
+        if overlay_hashtags:
+            overlay_body = sanitize_overlay_text(f"{overlay_body} {DEFAULT_HASHTAGS}")
 
         caption_lines = wrap_overlay_text(
-            caption_body,
+            overlay_body,
             max_chars=caption_max_chars,
             max_lines=caption_max_lines,
         )
@@ -56,6 +61,7 @@ def generate_captions(
         updated["hook_text"] = hook
         updated["caption_text"] = " ".join(caption_lines)
         updated["caption_lines"] = caption_lines
+        updated["social_caption"] = social_body
         updated["short_title"] = sanitize_overlay_text(_short_title(categories, hook))
         captioned.append(updated)
 
@@ -75,14 +81,23 @@ def _pick_hook(categories: list[str], score: float) -> str:
     return "Wait for it"
 
 
-def _caption_text(highlight: dict, video_name: str, score: float) -> str:
+def _overlay_caption_text(highlight: dict, score: float) -> str:
+    """Short on-screen caption optimized for 40-char line wrapping."""
+    summary = sanitize_overlay_text(str(highlight.get("summary") or "Gameplay highlight"))
+    summary = summary.rstrip(".")
+    if len(summary) > 72:
+        summary = summary[:69].rstrip() + "..."
+    return summary
+
+
+def _social_caption_text(highlight: dict, video_name: str, score: float) -> str:
+    """Longer caption for export/sharing metadata, not burned into video."""
     summary = sanitize_overlay_text(str(highlight.get("summary") or "Gameplay highlight"))
     summary = summary.rstrip(".")
     score_int = int(round(score))
-
     if video_name:
-        return f"{summary}. Viral score {score_int} out of 100 from {video_name}."
-    return f"{summary}. Viral score {score_int} out of 100."
+        return f"{summary}. Viral score {score_int}/100 from {video_name}."
+    return f"{summary}. Viral score {score_int}/100."
 
 
 def _short_title(categories: list[str], hook: str) -> str:

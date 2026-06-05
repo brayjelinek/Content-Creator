@@ -46,7 +46,7 @@ class GameplayAutoEditorApp:
 
         self.provider_var = StringVar(value=self._initial_provider())
         self.max_clips_var = StringVar(value="5")
-        self.min_score_var = StringVar(value="55")
+        self.min_score_var = StringVar(value="25")
         self.interval_var = StringVar(value="3")
         self.max_frames_var = StringVar(value="10")
         self.status_var = StringVar(value="Choose a gameplay video to begin.")
@@ -183,6 +183,18 @@ class GameplayAutoEditorApp:
             )
             return
 
+        try:
+            from scripts.pipeline_validation import preflight_pipeline
+            from scripts.pipeline import load_config
+
+            preflight = preflight_pipeline(self.selected_video, load_config().get("rendering", {}))
+            if not preflight["ok"]:
+                messagebox.showerror(APP_TITLE, "\n".join(preflight["errors"]))
+                return
+        except Exception as exc:  # noqa: BLE001
+            messagebox.showerror(APP_TITLE, f"Preflight check failed:\n{exc}")
+            return
+
         settings = self._settings_override()
         self.generate_button.configure(state="disabled")
         self.status_var.set("Generating clips. This can take a few minutes...")
@@ -245,7 +257,18 @@ class GameplayAutoEditorApp:
     def _generation_done(self, report: dict) -> None:
         self.report = report
         self.generate_button.configure(state="normal")
-        self.status_var.set(f"Done. Created {report.get('clips_created', 0)} clip(s).")
+        clips_created = int(report.get("clips_created", 0))
+        self.status_var.set(f"Done. Created {clips_created} clip(s).")
+        if clips_created == 0:
+            reason = report.get("failure_reason")
+            log_file = report.get("log_file", "")
+            if reason == "no_highlights":
+                hint = "No highlight moments were detected. Try lowering minimum score or using more frames."
+            elif reason == "render_failed":
+                hint = "Highlights were found but FFmpeg rendering failed. Open the log file for [FFmpeg] errors."
+            else:
+                hint = "No clips were created. Open the log file for details."
+            self._append_progress(f"\n{hint}\nLog file: {log_file}\n")
         self._show_results(report)
 
     def _generation_failed(self, error_text: str) -> None:
@@ -258,7 +281,20 @@ class GameplayAutoEditorApp:
         self._clear_results()
         clips = report.get("clips", [])
         if not clips:
-            ttk.Label(self.results_canvas, text="No clips were created. Try lowering the minimum score.").pack(anchor=W)
+            reason = report.get("failure_reason")
+            if reason == "render_failed":
+                message = (
+                    "Highlights were detected but rendering failed. "
+                    "Check the log file for [FFmpeg] errors (font path, filter chain, or missing FFmpeg)."
+                )
+            elif reason == "no_highlights":
+                message = "No highlights were detected. Try heuristic mode, lower minimum score, or a longer video."
+            else:
+                message = "No clips were created. See the progress box and log file for details."
+            ttk.Label(self.results_canvas, text=message, wraplength=900).pack(anchor=W)
+            log_file = report.get("log_file")
+            if log_file:
+                ttk.Label(self.results_canvas, text=f"Log file: {log_file}", wraplength=900).pack(anchor=W, pady=(6, 0))
             return
 
         for index, clip in enumerate(clips, start=1):

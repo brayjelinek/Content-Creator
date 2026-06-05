@@ -3,11 +3,61 @@
 from __future__ import annotations
 
 import logging
+import shutil
 from pathlib import Path
 
+from scripts.render_settings import merge_render_config, resolve_font_path
 from scripts.text_utils import validate_filter_chain
 
 logger = logging.getLogger(__name__)
+
+
+def preflight_pipeline(
+    input_video: str | Path,
+    render_config: dict | None = None,
+) -> dict:
+    """Verify dependencies and inputs before the pipeline runs."""
+    settings = merge_render_config(render_config)
+    video_path = Path(input_video)
+    checks: dict[str, bool] = {}
+    errors: list[str] = []
+
+    checks["video_exists"] = video_path.exists()
+    if not checks["video_exists"]:
+        errors.append(f"Input video not found: {video_path}")
+
+    checks["ffmpeg"] = shutil.which("ffmpeg") is not None
+    if not checks["ffmpeg"]:
+        errors.append("ffmpeg is not on PATH.")
+
+    checks["ffprobe"] = shutil.which("ffprobe") is not None
+    if not checks["ffprobe"]:
+        errors.append("ffprobe is not on PATH.")
+
+    try:
+        import cv2  # noqa: F401
+
+        checks["opencv"] = True
+    except ImportError:
+        checks["opencv"] = False
+        errors.append("OpenCV (cv2) is not installed.")
+
+    font_path = resolve_font_path(settings.get("font_candidates"))
+    checks["font"] = bool(font_path) and Path(font_path).exists()
+    if not checks["font"]:
+        errors.append(
+            "No overlay font found. Install Arial/DejaVu or update font_candidates in config.json."
+        )
+    else:
+        logger.info("[Validation] Preflight font OK: %s", font_path)
+
+    ok = all(checks.values())
+    logger.info("[Validation] Preflight checks: %s", checks)
+    if errors:
+        for message in errors:
+            logger.error("[Validation] Preflight failed: %s", message)
+
+    return {"ok": ok, "checks": checks, "errors": errors, "font_path": font_path}
 
 
 def validate_highlight_timestamps(highlight: dict, video_duration: float) -> None:
@@ -17,7 +67,10 @@ def validate_highlight_timestamps(highlight: dict, video_duration: float) -> Non
     timestamp = float(highlight.get("timestamp", start))
 
     if video_duration <= 0:
-        logger.warning("[Validation] Video duration unknown — skipping timestamp bounds check.")
+        logger.warning(
+            "[Validation] Video duration unknown for %s — timestamp bounds not enforced.",
+            highlight.get("id"),
+        )
         return
 
     if start < 0 or start > video_duration:
@@ -81,12 +134,8 @@ def validate_processed_clip_exists(processed_path: str | Path) -> None:
 def validate_output_file_exists(output_path: str | Path) -> None:
     """Confirm FFmpeg wrote the expected output file."""
     path = Path(output_path)
-    if not path.exists():
+    if not path.exists() or path.stat().st_size <= 0:
         logger.error("[FFmpeg] Output file missing — render failed.")
-        raise RuntimeError(f"Output file missing after FFmpeg: {path}")
-
-    if path.stat().st_size <= 0:
-        logger.error("[FFmpeg] Output file missing — render failed.")
-        raise RuntimeError(f"Output file is empty after FFmpeg: {path}")
+        raise RuntimeError(f"Output file missing or empty after FFmpeg: {path}")
 
     logger.info("[Validation] Output file confirmed: %s", path)
