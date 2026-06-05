@@ -90,7 +90,7 @@ def render_vertical_clip(
     highlight: dict,
     render_config: dict,
 ) -> None:
-    filter_string = _vertical_filter(
+    filter_chain = build_vertical_filter_chain(
         hook_text=highlight.get("hook_text", "Wait for it"),
         caption_text=highlight.get("caption_text", highlight.get("summary", "")),
         width=int(render_config.get("width", 1080)),
@@ -98,13 +98,16 @@ def render_vertical_clip(
         hook_font_size=int(render_config.get("top_hook_font_size", 64)),
         caption_font_size=int(render_config.get("caption_font_size", 48)),
     )
+
+    print(f"FFmpeg filter chain:\n{filter_chain}")
+
     command = [
         "ffmpeg",
         "-y",
         "-i",
         str(input_path),
         "-vf",
-        filter_string,
+        filter_chain,
         "-map",
         "0:v:0",
         "-map",
@@ -144,7 +147,7 @@ def get_video_duration(video_path: str | Path) -> float:
         return 0.0
 
 
-def _vertical_filter(
+def build_vertical_filter_chain(
     hook_text: str,
     caption_text: str,
     width: int,
@@ -152,7 +155,8 @@ def _vertical_filter(
     hook_font_size: int,
     caption_font_size: int,
 ) -> str:
-    filters = [
+    font_path = _font_file()
+    filters: list[str] = [
         f"scale={width}:{height}:force_original_aspect_ratio=increase",
         f"crop={width}:{height}",
         "setsar=1",
@@ -163,38 +167,64 @@ def _vertical_filter(
 
     y = 110
     for line in hook_lines:
-        filters.append(_drawtext(line, hook_font_size, y))
+        filters.append(_drawtext_filter(line, hook_font_size, y, font_path))
         y += hook_font_size + 22
 
     caption_start_y = height - 360
     for offset, line in enumerate(caption_lines):
-        filters.append(_drawtext(line, caption_font_size, caption_start_y + offset * (caption_font_size + 18)))
+        filters.append(
+            _drawtext_filter(
+                line,
+                caption_font_size,
+                caption_start_y + offset * (caption_font_size + 18),
+                font_path,
+            )
+        )
 
     return ",".join(filters)
 
 
-def _drawtext(text: str, font_size: int, y: int) -> str:
-    font_part = ""
-    font_file = _font_file()
-    if font_file:
-        font_part = f"fontfile={_escape_font_file(font_file)}:"
+def _drawtext_filter(text: str, font_size: int, y: int, font_path: str) -> str:
+    sanitized = _sanitize_drawtext_text(text)
+    parts = ["drawtext"]
+
+    if font_path:
+        parts[0] = f"drawtext=fontfile={_escape_font_path(font_path)}"
 
     return (
-        "drawtext="
-        f"{font_part}"
-        f"text='{_escape_drawtext(text)}':"
-        "fontcolor=white:"
+        f"{parts[0]}:"
+        f'text="{sanitized}":'
         f"fontsize={font_size}:"
+        "fontcolor=white:"
         "box=1:"
-        "boxcolor=black@0.58:"
+        "boxcolor=black@0.6:"
         "boxborderw=18:"
         "x=(w-text_w)/2:"
         f"y={y}"
     )
 
 
+def _sanitize_drawtext_text(text: str) -> str:
+    cleaned = str(text).replace("\r", " ").replace("\n", " ")
+    cleaned = cleaned.replace('"', "'")
+    cleaned = cleaned.replace(":", " ")
+    cleaned = cleaned.replace(",", " ")
+    cleaned = cleaned.replace("\\", " ")
+    cleaned = cleaned.replace("%", " percent")
+    return " ".join(cleaned.split())
+
+
+def _escape_font_path(path: str) -> str:
+    normalized = Path(path).as_posix()
+    if len(normalized) >= 2 and normalized[1] == ":":
+        drive = normalized[0]
+        rest = normalized[2:]
+        return f"{drive}\\:{rest}"
+    return normalized.replace(":", "\\:")
+
+
 def _wrap_text(text: str, max_chars: int, max_lines: int) -> list[str]:
-    words = str(text).replace("\n", " ").split()
+    words = _sanitize_drawtext_text(text).split()
     lines: list[str] = []
     current: list[str] = []
 
@@ -216,30 +246,13 @@ def _wrap_text(text: str, max_chars: int, max_lines: int) -> list[str]:
     return lines or ["Gameplay highlight"]
 
 
-def _escape_drawtext(text: str) -> str:
-    return (
-        str(text)
-        .replace("\\", "\\\\")
-        .replace("'", "")
-        .replace(":", "\\:")
-        .replace(",", "\\,")
-        .replace("%", "\\%")
-    )
-
-
-def _escape_font_file(path: str) -> str:
-    """Escape Windows drive letters and other colons for FFmpeg drawtext."""
-    normalized = path.replace("\\", "/")
-    return normalized.replace(":", "\\:")
-
-
 def _font_file() -> str:
     candidates = [
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-        "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf",
-        "/Library/Fonts/Arial Bold.ttf",
         "C:/Windows/Fonts/arialbd.ttf",
         "C:/Windows/Fonts/arial.ttf",
+        "/Library/Fonts/Arial Bold.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf",
     ]
     for candidate in candidates:
         if Path(candidate).exists():
