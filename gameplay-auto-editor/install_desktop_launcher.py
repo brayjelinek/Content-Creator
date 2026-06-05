@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import platform
+import subprocess
 from pathlib import Path
 
 
@@ -29,11 +30,18 @@ def main() -> int:
 
 def _install_windows_launcher(app_dir: Path, desktop_dir: Path) -> Path:
     launcher = app_dir / f"{APP_NAME}.bat"
-    destination = desktop_dir / launcher.name
+    shortcut = desktop_dir / f"{APP_NAME}.lnk"
+    fallback = desktop_dir / launcher.name
     if not launcher.exists():
         raise FileNotFoundError(f"Missing launcher script: {launcher}")
 
-    destination.write_text(
+    try:
+        _create_windows_shortcut(shortcut, launcher, app_dir)
+        return shortcut
+    except Exception as exc:  # noqa: BLE001 - use a simple fallback if PowerShell is unavailable.
+        print(f"Could not create Windows shortcut, using batch fallback instead: {exc}")
+
+    fallback.write_text(
         "\n".join(
             [
                 "@echo off",
@@ -44,7 +52,24 @@ def _install_windows_launcher(app_dir: Path, desktop_dir: Path) -> Path:
         ),
         encoding="utf-8",
     )
-    return destination
+    return fallback
+
+
+def _create_windows_shortcut(shortcut: Path, target: Path, working_dir: Path) -> None:
+    ps_command = (
+        "$WScriptShell = New-Object -ComObject WScript.Shell; "
+        f"$Shortcut = $WScriptShell.CreateShortcut('{_ps_escape(shortcut)}'); "
+        f"$Shortcut.TargetPath = '{_ps_escape(target)}'; "
+        f"$Shortcut.WorkingDirectory = '{_ps_escape(working_dir)}'; "
+        "$Shortcut.Description = 'Gameplay Auto Editor'; "
+        "$Shortcut.Save()"
+    )
+    subprocess.run(
+        ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps_command],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
 
 
 def _install_mac_launcher(app_dir: Path, desktop_dir: Path) -> Path:
@@ -103,6 +128,10 @@ def _install_linux_launcher(app_dir: Path, desktop_dir: Path) -> Path:
 def _make_executable(path: Path) -> None:
     if path.exists():
         path.chmod(path.stat().st_mode | 0o755)
+
+
+def _ps_escape(path: Path) -> str:
+    return str(path).replace("'", "''")
 
 
 if __name__ == "__main__":

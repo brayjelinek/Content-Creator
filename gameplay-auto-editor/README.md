@@ -112,6 +112,22 @@ Set `"provider": "auto"` to use OpenAI if `OPENAI_API_KEY` exists, Anthropic if 
 
 The easiest non-technical way to use the tool is the native desktop app window.
 
+### Best option: download a packaged app build
+
+For a true app-like experience, use the GitHub Actions artifact for your operating system:
+
+1. Run or open the **Build desktop app** workflow.
+2. Download the artifact for Windows, macOS, or Linux.
+3. Unzip it.
+4. Open **Gameplay Auto Editor** from the unzipped app folder.
+5. Move the app or launcher to your Desktop if you want a desktop icon.
+
+This is the recommended non-technical testing path.
+
+### Source-folder launchers
+
+If you are running from the source project folder instead of a packaged artifact:
+
 Double-click the launcher for your computer:
 
 - Windows: `Launch Gameplay Auto Editor.bat`

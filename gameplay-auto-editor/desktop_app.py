@@ -11,7 +11,7 @@ import threading
 import traceback
 from contextlib import redirect_stdout
 from pathlib import Path
-from tkinter import BOTH, END, LEFT, RIGHT, VERTICAL, W, filedialog, messagebox
+from tkinter import BOTH, END, LEFT, W, Canvas, filedialog, messagebox
 from tkinter import StringVar, Text, Tk
 from tkinter import ttk
 
@@ -109,8 +109,32 @@ class GameplayAutoEditorApp:
 
         results_outer = ttk.LabelFrame(outer, text="3. Review generated clips", padding=10)
         results_outer.pack(fill=BOTH, expand=True)
-        self.results_canvas = ttk.Frame(results_outer)
-        self.results_canvas.pack(fill=BOTH, expand=True)
+        self.results_canvas_widget = Canvas(results_outer, highlightthickness=0)
+        self.results_scrollbar = ttk.Scrollbar(
+            results_outer,
+            orient="vertical",
+            command=self.results_canvas_widget.yview,
+        )
+        self.results_canvas = ttk.Frame(self.results_canvas_widget)
+        self.results_canvas.bind(
+            "<Configure>",
+            lambda _event: self.results_canvas_widget.configure(
+                scrollregion=self.results_canvas_widget.bbox("all")
+            ),
+        )
+        self.results_window = self.results_canvas_widget.create_window(
+            (0, 0),
+            window=self.results_canvas,
+            anchor="nw",
+        )
+        self.results_canvas_widget.configure(yscrollcommand=self.results_scrollbar.set)
+        self.results_canvas_widget.bind(
+            "<Configure>",
+            lambda event: self.results_canvas_widget.itemconfigure(self.results_window, width=event.width),
+        )
+        self.results_canvas_widget.pack(side=LEFT, fill=BOTH, expand=True)
+        self.results_scrollbar.pack(side="right", fill="y")
+        self.results_canvas_widget.bind_all("<MouseWheel>", self._on_mousewheel)
 
         self.results_placeholder = ttk.Label(
             self.results_canvas,
@@ -271,6 +295,9 @@ class GameplayAutoEditorApp:
     def _append_progress(self, text: str) -> None:
         self.progress_text.insert(END, text if text.endswith("\n") else text + "\n")
         self.progress_text.see(END)
+
+    def _on_mousewheel(self, event) -> None:
+        self.results_canvas_widget.yview_scroll(int(-1 * (event.delta / 120)), "units")
 
     def _settings_override(self) -> dict:
         return {

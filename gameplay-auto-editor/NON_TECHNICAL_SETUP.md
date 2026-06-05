@@ -5,7 +5,7 @@ This project now has two ways to run:
 1. A native desktop app window.
 2. An optional browser dashboard.
 
-The native desktop app is the recommended non-technical option.
+The native desktop app is the recommended non-technical option. The easiest version is the packaged app artifact from GitHub Actions, because it works like a normal downloaded app folder.
 
 ## Why you do not see the desktop icon
 
@@ -13,7 +13,26 @@ The icon created by the cloud agent was created on the remote Cursor Cloud compu
 
 To see an icon on your own desktop, you need to download this project to your own computer and either run the local launcher installer once or use a packaged app build.
 
-## What you need installed once
+## Best option: packaged app artifact
+
+Use this when you want the closest thing to a normal app:
+
+1. Open the GitHub Actions build named **Build desktop app**.
+2. Download the artifact for your computer:
+   - `Gameplay-Auto-Editor-Windows`
+   - `Gameplay-Auto-Editor-macOS`
+   - `Gameplay-Auto-Editor-Linux`
+3. Unzip it.
+4. Open **Gameplay Auto Editor** from the unzipped folder.
+5. Optionally drag the app or launcher to your Desktop.
+
+That is the path intended for non-technical testing.
+
+## Source-folder option
+
+Use this only if you downloaded the source project instead of a built app artifact.
+
+### What you need installed once
 
 You need these installed on your computer:
 
@@ -24,7 +43,7 @@ After those are installed, the launcher will install the remaining Python packag
 
 If you use a packaged app build from GitHub Actions, Python packages are already bundled. FFmpeg is also bundled when the build process can find it.
 
-## Option 1: Double-click from the project folder
+### Option 1: Double-click from the project folder
 
 After downloading the project:
 
@@ -54,7 +73,7 @@ Double-click:
 launch_desktop_app.sh
 ```
 
-## Option 2: Create a desktop icon
+### Option 2: Create a desktop icon
 
 After downloading the project, open the project folder and run:
 
@@ -84,7 +103,7 @@ Gameplay Auto Editor
 6. Review the generated clips.
 7. Play, export, or copy captions for the clips you want to post.
 
-## Packaged app option
+## Packaging details
 
 The project includes packaging support for a normal desktop build:
 
@@ -94,7 +113,7 @@ PACKAGING.md
 .github/workflows/build-desktop-app.yml
 ```
 
-The easiest future workflow is:
+The easiest app-style workflow is:
 
 1. Run the GitHub Actions desktop build.
 2. Download the artifact for your operating system.
