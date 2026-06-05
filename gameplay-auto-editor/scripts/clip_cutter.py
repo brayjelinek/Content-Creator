@@ -163,6 +163,7 @@ def render_vertical_clip(
     )
 
     validate_filter_chain(filter_chain)
+    print(f"[FFmpeg] Filter chain: {filter_chain}")
     logger.info("[FFmpeg] Filter chain: %s", filter_chain)
 
     command = [
@@ -230,14 +231,21 @@ def build_vertical_filter_chain(
             max_lines=int(cfg["caption_max_lines"]),
         )
 
+    side_safe = int(cfg["side_safe_zone"])
+    centered_x = _centered_x_with_safe_zone(side_safe)
+
     hook_y = top_safe
     hook_line_gap = hook_font + 20
+    max_hook_y = top_safe + (int(cfg["hook_max_lines"]) * hook_line_gap)
     for line in hook_lines:
+        if hook_y + hook_font > max_hook_y:
+            break
         filters.append(
             _build_drawtext_filter(
                 text=line,
                 font_size=hook_font,
                 y=hook_y,
+                x=centered_x,
                 font_path=font_path,
                 box_color=box_color,
                 box_border=box_border,
@@ -246,21 +254,24 @@ def build_vertical_filter_chain(
         hook_y += hook_line_gap
 
     caption_line_gap = caption_font + 18
-    caption_block_height = (
-        len(wrapped_caption_lines) * caption_font + max(0, len(wrapped_caption_lines) - 1) * 18
+    caption_y_anchor = height - bottom_safe
+    wrapped_lines = wrapped_caption_lines[: int(cfg["caption_max_lines"])]
+    caption_positions = _caption_line_positions(
+        line_count=len(wrapped_lines),
+        caption_font=caption_font,
+        line_gap=caption_line_gap,
+        anchor_y=caption_y_anchor,
     )
-    caption_anchor_y = height - bottom_safe
-    caption_start_y = max(top_safe + hook_font + 40, caption_anchor_y - caption_block_height)
 
-    for offset, line in enumerate(wrapped_caption_lines):
-        line_y = caption_start_y + offset * caption_line_gap
-        if line_y + caption_font > height - bottom_safe:
+    for line, line_y in zip(wrapped_lines, caption_positions):
+        if line_y < top_safe + hook_font + 20:
             break
         filters.append(
             _build_drawtext_filter(
                 text=line,
                 font_size=caption_font,
                 y=line_y,
+                x=centered_x,
                 font_path=font_path,
                 box_color=box_color,
                 box_border=box_border,
@@ -270,6 +281,29 @@ def build_vertical_filter_chain(
     return ",".join(filters)
 
 
+def _centered_x_with_safe_zone(side_safe: int) -> str:
+    """Build a drawtext x expression that keeps text inside side safe margins."""
+    return f"max({side_safe}\\,min(w-text_w-{side_safe}\\,(w-text_w)/2))"
+
+
+def _caption_line_positions(
+    line_count: int,
+    caption_font: int,
+    line_gap: int,
+    anchor_y: int,
+) -> list[int]:
+    """Place caption lines upward from the bottom safe-zone boundary."""
+    if line_count <= 0:
+        return []
+
+    positions: list[int] = []
+    current_y = anchor_y - caption_font
+    for _ in range(line_count):
+        positions.insert(0, current_y)
+        current_y -= line_gap
+    return positions
+
+
 def _build_drawtext_filter(
     text: str,
     font_size: int,
@@ -277,6 +311,7 @@ def _build_drawtext_filter(
     font_path: str,
     box_color: str,
     box_border: int,
+    x: str = "(w-text_w)/2",
 ) -> str:
     """Build one drawtext filter segment from a list of options."""
     sanitized = sanitize_overlay_text(text)
@@ -293,7 +328,7 @@ def _build_drawtext_filter(
             "box=1",
             f"boxcolor={box_color}",
             f"boxborderw={box_border}",
-            "x=(w-text_w)/2",
+            f"x={x}",
             f"y={y}",
         ]
     )

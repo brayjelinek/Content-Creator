@@ -20,12 +20,20 @@ CATEGORY_HOOKS = {
 }
 
 DEFAULT_HASHTAGS = "#gaming #highlights #shorts #clips"
-CAPTION_MAX_CHARS = 40
-CAPTION_MAX_LINES = 3
 
 
-def generate_captions(highlights: Iterable[dict], video_name: str, add_hashtags: bool = True) -> List[dict]:
+def generate_captions(
+    highlights: Iterable[dict],
+    video_name: str,
+    add_hashtags: bool = True,
+    render_config: dict | None = None,
+) -> List[dict]:
     """Attach overlay-safe hook and wrapped caption lines to each highlight."""
+    from scripts.render_settings import merge_render_config
+
+    settings = merge_render_config(render_config)
+    caption_max_chars = int(settings.get("caption_max_chars", 40))
+    caption_max_lines = int(settings.get("caption_max_lines", 3))
     display_name = _display_video_name(video_name)
     captioned = []
 
@@ -40,8 +48,8 @@ def generate_captions(highlights: Iterable[dict], video_name: str, add_hashtags:
 
         caption_lines = wrap_overlay_text(
             caption_body,
-            max_chars=CAPTION_MAX_CHARS,
-            max_lines=CAPTION_MAX_LINES,
+            max_chars=caption_max_chars,
+            max_lines=caption_max_lines,
         )
 
         updated = dict(highlight)

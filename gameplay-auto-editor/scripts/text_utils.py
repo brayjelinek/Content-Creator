@@ -52,6 +52,25 @@ def validate_filter_chain(filter_chain: str) -> None:
     if re.search(r"text='", filter_chain):
         raise ValueError("Filter chain contains single-quoted drawtext values.")
 
+    drawtext_segments = re.findall(r"drawtext=[^,]*", filter_chain)
+    for segment in drawtext_segments:
+        if "text='" in segment or "text=''" in segment:
+            raise ValueError("Drawtext segment uses single quotes.")
+        if 'text="' not in segment:
+            raise ValueError(f"Drawtext segment missing double-quoted text: {segment}")
+
+    font_paths = re.findall(r"fontfile=((?:\\:|[^:])+)", filter_chain)
+    for raw_path in font_paths:
+        normalized = raw_path.replace("\\:", ":")
+        if "\\" in normalized:
+            raise ValueError(f"Font path contains stray backslashes: {raw_path}")
+        if normalized.count(":") > 1 or (
+            len(normalized) > 1 and normalized[1] == ":" and normalized.count(":") > 1
+        ):
+            raise ValueError(f"Font path contains unescaped colon: {raw_path}")
+        if "//" in normalized.replace("\\:", ":"):
+            raise ValueError(f"Font path contains invalid slashes: {raw_path}")
+
 
 def looks_like_uuid(value: str) -> bool:
     """Return True when a filename stem looks like a UUID."""

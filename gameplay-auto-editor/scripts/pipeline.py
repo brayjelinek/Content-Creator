@@ -13,7 +13,7 @@ from typing import Any, Dict
 from dotenv import load_dotenv
 
 from scripts.caption_generator import generate_captions
-from scripts.clip_cutter import get_video_duration, process_single_highlight
+from scripts.clip_cutter import get_video_duration, process_highlights
 from scripts.frame_extractor import extract_frames
 from scripts.highlight_detector import detect_highlights
 from scripts.logging_utils import setup_pipeline_logging
@@ -83,7 +83,10 @@ def run_pipeline(
     logger.info("[Pipeline] Extracted %s frame sample(s)", len(frame_samples))
 
     provider = vision_config.get("provider", "heuristic")
-    logger.info("[Pipeline] Running %s analysis on %s frame(s)", provider, len(frame_samples))
+    if provider == "heuristic":
+        logger.info("[Pipeline] Running heuristic analysis...")
+    else:
+        logger.info("[Pipeline] Running %s analysis on %s frame(s)", provider, len(frame_samples))
     analyzer = VisionAnalyzer(vision_config)
     analyses = analyzer.analyze_frames(frame_samples)
     _write_json(report_dir / f"{video_stem}_analysis.json", analyses)
@@ -109,27 +112,24 @@ def run_pipeline(
         highlights,
         video_name=video_stem,
         add_hashtags=bool(render_config.get("add_hashtags", True)),
+        render_config=render_config,
     )
     _write_json(report_dir / f"{video_stem}_highlights.json", captioned_highlights)
 
-    video_id = _safe_video_id(video_stem)
-    rendered = []
     logger.info("[Pipeline] Rendering vertical clips")
-    for highlight in captioned_highlights:
-        try:
-            clip = process_single_highlight(
-                video_path=input_video,
-                highlight=highlight,
-                processed_dir=paths["processed"],
-                final_dir=paths["final"],
-                render_config=render_config,
-                video_id=video_id,
-            )
-            if clip:
-                rendered.append(clip)
-                logger.info("[Pipeline] Final clip ready: %s (score %s)", clip["final_clip"], clip.get("score"))
-        except Exception as exc:  # noqa: BLE001 - continue remaining highlights
-            logger.error("[Pipeline] Highlight %s failed: %s", highlight.get("id"), exc)
+    rendered = process_highlights(
+        video_path=input_video,
+        highlights=captioned_highlights,
+        processed_dir=paths["processed"],
+        final_dir=paths["final"],
+        render_config=render_config,
+    )
+    for clip in rendered:
+        logger.info(
+            "[Pipeline] Final clip ready: %s (score %s)",
+            clip["final_clip"],
+            clip.get("score"),
+        )
 
     report = {
         "input_video": str(input_video),
@@ -189,16 +189,6 @@ def resolve_video_path(video_path: str | Path) -> Path:
         f"Could not find video '{video_path}'. Put it in {PROJECT_ROOT / 'raw_clips'} "
         "or pass an absolute path."
     )
-
-
-def _safe_video_id(name: str) -> str:
-    allowed = []
-    for char in str(name).lower():
-        if char.isalnum() or char in {"-", "_"}:
-            allowed.append(char)
-        elif char in {" ", "."}:
-            allowed.append("_")
-    return "".join(allowed).strip("_") or "video"
 
 
 def _write_json(path: Path, payload: Any) -> None:
