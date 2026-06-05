@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 from typing import Any, Dict
+
+from dotenv import load_dotenv
 
 from scripts.caption_generator import generate_captions
 from scripts.clip_cutter import get_video_duration, process_highlights
@@ -17,8 +20,14 @@ from scripts.vision_analyzer import VisionAnalyzer
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
-def run_pipeline(video_path: str | Path, config_path: str | Path | None = None) -> dict:
+def run_pipeline(
+    video_path: str | Path,
+    config_path: str | Path | None = None,
+    config_override: dict | None = None,
+) -> dict:
     config = load_config(config_path)
+    if config_override:
+        config = _deep_merge(config, config_override)
     paths = ensure_project_dirs()
     input_video = resolve_video_path(video_path)
 
@@ -79,10 +88,12 @@ def run_pipeline(video_path: str | Path, config_path: str | Path | None = None) 
 
 
 def load_config(config_path: str | Path | None = None) -> Dict[str, Any]:
+    load_dotenv(PROJECT_ROOT / ".env")
     path = Path(config_path) if config_path else PROJECT_ROOT / "config.json"
     if not path.exists():
         raise FileNotFoundError(f"Config file not found: {path}")
-    return json.loads(path.read_text(encoding="utf-8"))
+    config = json.loads(path.read_text(encoding="utf-8"))
+    return _apply_env_overrides(config)
 
 
 def ensure_project_dirs() -> dict[str, Path]:
@@ -119,6 +130,36 @@ def resolve_video_path(video_path: str | Path) -> Path:
 def _write_json(path: Path, payload: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+def _apply_env_overrides(config: Dict[str, Any]) -> Dict[str, Any]:
+    config = dict(config)
+    vision = dict(config.get("vision", {}))
+
+    env_map = {
+        "VISION_PROVIDER": "provider",
+        "OPENAI_API_KEY": "openai_api_key",
+        "OPENAI_MODEL": "openai_model",
+        "ANTHROPIC_API_KEY": "anthropic_api_key",
+        "ANTHROPIC_MODEL": "anthropic_model",
+    }
+    for env_name, config_name in env_map.items():
+        value = os.getenv(env_name)
+        if value:
+            vision[config_name] = value
+
+    config["vision"] = vision
+    return config
+
+
+def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
+    merged = dict(base)
+    for key, value in override.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _deep_merge(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
 
 
 def main() -> int:

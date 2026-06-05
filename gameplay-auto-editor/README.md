@@ -18,6 +18,7 @@ gameplay-auto-editor/
     caption_generator.py
     pipeline.py
   config.json
+  dashboard.py
   run.py
   requirements.txt
   README.md
@@ -33,7 +34,7 @@ Install Python dependencies:
 
 ```bash
 cd gameplay-auto-editor
-python -m venv .venv
+python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 ```
@@ -47,7 +48,11 @@ ffprobe -version
 
 ## Configuration
 
-Edit `config.json`.
+Edit `config.json`, set environment variables, or copy `.env.example` to `.env`.
+
+```bash
+cp .env.example .env
+```
 
 For a fully local starter run, keep:
 
@@ -93,12 +98,29 @@ export ANTHROPIC_API_KEY="YOUR_KEY"
 
 Set `"provider": "auto"` to use OpenAI if `OPENAI_API_KEY` exists, Anthropic if `ANTHROPIC_API_KEY` exists, or the local heuristic if neither exists.
 
+## Run with the dashboard
+
+The easiest way to use the tool is the browser dashboard:
+
+```bash
+streamlit run dashboard.py
+```
+
+Then:
+
+1. Open the local URL shown in the terminal.
+2. Drop or upload a gameplay video.
+3. Choose the number of sample clips to generate.
+4. Click **Generate sample clips**.
+5. Review each vertical clip in the browser.
+6. Download the clips you want to post.
+
 ## Run
 
 Put gameplay videos in `raw_clips/`, then run:
 
 ```bash
-python run.py raw_clips/myvideo.mp4
+python3 run.py raw_clips/myvideo.mp4
 ```
 
 Outputs:
@@ -116,6 +138,7 @@ Outputs:
 4. `caption_generator.py` creates short hook text and captions.
 5. `clip_cutter.py` uses FFmpeg to cut segments, crop/scale to 1080x1920, and overlay text.
 6. `pipeline.py` ties all steps together.
+7. `dashboard.py` provides the upload, preview, and download UI.
 
 ## Notes
 
