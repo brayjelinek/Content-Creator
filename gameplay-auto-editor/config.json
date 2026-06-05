@@ -24,14 +24,20 @@
     "preset": "veryfast",
     "top_safe_zone": 250,
     "bottom_safe_zone": 300,
-    "left_right_safe_zone": 120,
+    "side_safe_zone": 120,
     "top_hook_font_size": 64,
     "caption_font_size": 48,
     "text_box_color": "black@0.6",
     "text_box_border": 18,
+    "font_candidates": [
+      "C:/Windows/Fonts/arialbd.ttf",
+      "C:/Windows/Fonts/arial.ttf",
+      "/Library/Fonts/Arial Bold.ttf",
+      "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+    ],
     "hook_max_chars": 22,
     "hook_max_lines": 2,
-    "caption_max_chars": 32,
+    "caption_max_chars": 40,
     "caption_max_lines": 3,
     "add_hashtags": true
   }

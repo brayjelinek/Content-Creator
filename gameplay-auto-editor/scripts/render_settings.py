@@ -7,16 +7,13 @@ from pathlib import Path
 from typing import Any
 
 
-# Vertical short-form target (TikTok, Reels, Shorts)
 OUTPUT_WIDTH = 1080
 OUTPUT_HEIGHT = 1920
 
-# Safe zones keep text away from platform UI overlays
 TOP_SAFE_ZONE = 250
 BOTTOM_SAFE_ZONE = 300
-LEFT_RIGHT_SAFE_ZONE = 120
+SIDE_SAFE_ZONE = 120
 
-# Drawtext styling
 HOOK_FONT_SIZE = 64
 CAPTION_FONT_SIZE = 48
 TEXT_BOX_COLOR = "black@0.6"
@@ -37,7 +34,7 @@ DEFAULT_RENDER_CONFIG: dict[str, Any] = {
     "preset": "veryfast",
     "top_safe_zone": TOP_SAFE_ZONE,
     "bottom_safe_zone": BOTTOM_SAFE_ZONE,
-    "left_right_safe_zone": LEFT_RIGHT_SAFE_ZONE,
+    "side_safe_zone": SIDE_SAFE_ZONE,
     "top_hook_font_size": HOOK_FONT_SIZE,
     "caption_font_size": CAPTION_FONT_SIZE,
     "text_box_color": TEXT_BOX_COLOR,
@@ -46,7 +43,7 @@ DEFAULT_RENDER_CONFIG: dict[str, Any] = {
     "add_hashtags": True,
     "hook_max_chars": 22,
     "hook_max_lines": 2,
-    "caption_max_chars": 32,
+    "caption_max_chars": 40,
     "caption_max_lines": 3,
 }
 
@@ -56,12 +53,15 @@ def merge_render_config(config: dict | None) -> dict[str, Any]:
     merged = deepcopy(DEFAULT_RENDER_CONFIG)
     if config:
         merged.update(config)
+        if "left_right_safe_zone" in config and "side_safe_zone" not in config:
+            merged["side_safe_zone"] = config["left_right_safe_zone"]
     return merged
 
 
 def resolve_font_path(candidates: list[str] | None = None) -> str:
-    """Pick the first available system font for FFmpeg drawtext."""
+    """Pick the first available system font using forward-slash paths."""
     for candidate in candidates or FONT_CANDIDATES:
-        if Path(candidate).exists():
-            return Path(candidate).as_posix()
+        path = Path(candidate)
+        if path.exists():
+            return path.as_posix()
     return ""

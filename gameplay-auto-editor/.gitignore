@@ -17,3 +17,6 @@ final_clips/*
 
 models/*
 !models/.gitkeep
+
+logs/*
+!logs/.gitkeep

@@ -13,12 +13,12 @@ from typing import Any, Dict
 from dotenv import load_dotenv
 
 from scripts.caption_generator import generate_captions
-from scripts.clip_cutter import get_video_duration, process_highlights
+from scripts.clip_cutter import get_video_duration, process_single_highlight
 from scripts.frame_extractor import extract_frames
 from scripts.highlight_detector import detect_highlights
+from scripts.logging_utils import setup_pipeline_logging
 from scripts.vision_analyzer import VisionAnalyzer
 
-logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger(__name__)
 
 
@@ -51,13 +51,18 @@ def run_pipeline(
     config_path: str | Path | None = None,
     config_override: dict | None = None,
 ) -> dict:
+    """Run the full clip generation workflow for one input video."""
     config = load_config(config_path)
     if config_override:
         config = _deep_merge(config, config_override)
+
     paths = ensure_project_dirs()
     input_video = resolve_video_path(video_path)
-
     video_stem = input_video.stem
+
+    log_path = setup_pipeline_logging(paths["logs"], video_stem)
+    logger.info("[Pipeline] Writing logs to %s", log_path)
+
     frame_dir = paths["processed"] / "frames" / video_stem
     report_dir = paths["processed"] / "reports"
     report_dir.mkdir(parents=True, exist_ok=True)
@@ -65,7 +70,7 @@ def run_pipeline(
     vision_config = config.get("vision", {})
     render_config = config.get("rendering", {})
 
-    _log_stage(1, "frame extraction", f"Sampling frames from {input_video.name}")
+    logger.info("[Pipeline] Extracting frames from %s", input_video.name)
     frame_samples = extract_frames(
         input_video,
         frame_dir,
@@ -75,23 +80,31 @@ def run_pipeline(
     )
     if not frame_samples:
         raise RuntimeError("No frames were extracted. Check that the input is a valid video file.")
-    logger.info("Extracted %s frame sample(s) to %s", len(frame_samples), frame_dir)
+    logger.info("[Pipeline] Extracted %s frame sample(s)", len(frame_samples))
 
     provider = vision_config.get("provider", "heuristic")
-    _log_stage(2, "vision analysis", f"Analyzing {len(frame_samples)} frame(s) with {provider}")
+    logger.info("[Pipeline] Running %s analysis on %s frame(s)", provider, len(frame_samples))
     analyzer = VisionAnalyzer(vision_config)
     analyses = analyzer.analyze_frames(frame_samples)
     _write_json(report_dir / f"{video_stem}_analysis.json", analyses)
-    logger.info("Saved analysis report to %s", report_dir / f"{video_stem}_analysis.json")
 
-    _log_stage(3, "highlight detection", "Scoring and merging highlight moments")
     duration = get_video_duration(input_video)
     highlights = detect_highlights(analyses, duration, config.get("highlight_detection", {}))
     if not highlights:
         raise RuntimeError("No highlights could be detected from the sampled frames.")
-    logger.info("Detected %s highlight clip candidate(s)", len(highlights))
 
-    _log_stage(4, "caption generation", "Building hook text and captions for overlays")
+    logger.info("[Pipeline] Detected %s highlight moment(s)", len(highlights))
+    for highlight in highlights:
+        logger.info(
+            "[Pipeline] Highlight %s at %.2fs (score %.2f, %.2fs-%.2fs)",
+            highlight.get("id"),
+            float(highlight.get("timestamp", 0)),
+            float(highlight.get("score", 0)),
+            float(highlight.get("start", 0)),
+            float(highlight.get("end", 0)),
+        )
+
+    logger.info("[Pipeline] Generating hooks and captions")
     captioned_highlights = generate_captions(
         highlights,
         video_name=video_stem,
@@ -99,16 +112,24 @@ def run_pipeline(
     )
     _write_json(report_dir / f"{video_stem}_highlights.json", captioned_highlights)
 
-    _log_stage(5, "ffmpeg render", "Cutting and rendering 1080x1920 vertical clips")
-    rendered = process_highlights(
-        input_video,
-        captioned_highlights,
-        paths["processed"],
-        paths["final"],
-        render_config,
-    )
-    for clip in rendered:
-        logger.info("Final clip ready: %s (score %s)", clip["final_clip"], clip.get("score"))
+    video_id = _safe_video_id(video_stem)
+    rendered = []
+    logger.info("[Pipeline] Rendering vertical clips")
+    for highlight in captioned_highlights:
+        try:
+            clip = process_single_highlight(
+                video_path=input_video,
+                highlight=highlight,
+                processed_dir=paths["processed"],
+                final_dir=paths["final"],
+                render_config=render_config,
+                video_id=video_id,
+            )
+            if clip:
+                rendered.append(clip)
+                logger.info("[Pipeline] Final clip ready: %s (score %s)", clip["final_clip"], clip.get("score"))
+        except Exception as exc:  # noqa: BLE001 - continue remaining highlights
+            logger.error("[Pipeline] Highlight %s failed: %s", highlight.get("id"), exc)
 
     report = {
         "input_video": str(input_video),
@@ -116,12 +137,14 @@ def run_pipeline(
         "frames_analyzed": len(frame_samples),
         "clips_created": len(rendered),
         "clips": rendered,
+        "log_file": str(log_path),
     }
     _write_json(report_dir / f"{video_stem}_run_report.json", report)
     return report
 
 
 def load_config(config_path: str | Path | None = None) -> Dict[str, Any]:
+    """Load config.json and apply environment overrides."""
     load_dotenv(PROJECT_ROOT / ".env")
     path = Path(config_path) if config_path else PROJECT_ROOT / "config.json"
     if not path.exists() and not config_path:
@@ -135,11 +158,13 @@ def load_config(config_path: str | Path | None = None) -> Dict[str, Any]:
 
 
 def ensure_project_dirs() -> dict[str, Path]:
+    """Create required project folders if missing."""
     paths = {
         "raw": PROJECT_ROOT / "raw_clips",
         "processed": PROJECT_ROOT / "processed_clips",
         "final": PROJECT_ROOT / "final_clips",
         "models": PROJECT_ROOT / "models",
+        "logs": PROJECT_ROOT / "logs",
     }
     for path in paths.values():
         path.mkdir(parents=True, exist_ok=True)
@@ -147,6 +172,7 @@ def ensure_project_dirs() -> dict[str, Path]:
 
 
 def resolve_video_path(video_path: str | Path) -> Path:
+    """Resolve an input video from absolute, relative, or raw_clips paths."""
     candidate = Path(video_path)
     if candidate.exists():
         return candidate.resolve()
@@ -163,6 +189,16 @@ def resolve_video_path(video_path: str | Path) -> Path:
         f"Could not find video '{video_path}'. Put it in {PROJECT_ROOT / 'raw_clips'} "
         "or pass an absolute path."
     )
+
+
+def _safe_video_id(name: str) -> str:
+    allowed = []
+    for char in str(name).lower():
+        if char.isalnum() or char in {"-", "_"}:
+            allowed.append(char)
+        elif char in {" ", "."}:
+            allowed.append("_")
+    return "".join(allowed).strip("_") or "video"
 
 
 def _write_json(path: Path, payload: Any) -> None:
@@ -190,10 +226,6 @@ def _apply_env_overrides(config: Dict[str, Any]) -> Dict[str, Any]:
     return config
 
 
-def _log_stage(step: int, name: str, message: str) -> None:
-    logger.info("[%s/5] %s: %s", step, name, message)
-
-
 def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
     merged = dict(base)
     for key, value in override.items():
@@ -205,6 +237,7 @@ def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any
 
 
 def main() -> int:
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     parser = argparse.ArgumentParser(description="AI-powered gameplay clip generator")
     parser.add_argument("video", help="Path to a raw gameplay video, e.g. raw_clips/myvideo.mp4")
     parser.add_argument("--config", help="Optional path to config.json", default=None)
@@ -214,6 +247,7 @@ def main() -> int:
     print("\nDone. Final clips:")
     for clip in report["clips"]:
         print(f"- {clip['final_clip']} (score {clip['score']})")
+    print(f"\nLog file: {report['log_file']}")
     return 0
 
 

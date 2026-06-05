@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Iterable, List
 
-from scripts.text_utils import looks_like_uuid, sanitize_overlay_text
+from scripts.text_utils import looks_like_uuid, sanitize_overlay_text, wrap_overlay_text
 
 
 CATEGORY_HOOKS = {
@@ -20,10 +20,12 @@ CATEGORY_HOOKS = {
 }
 
 DEFAULT_HASHTAGS = "#gaming #highlights #shorts #clips"
+CAPTION_MAX_CHARS = 40
+CAPTION_MAX_LINES = 3
 
 
 def generate_captions(highlights: Iterable[dict], video_name: str, add_hashtags: bool = True) -> List[dict]:
-    """Attach overlay-safe hook and caption text to each highlight."""
+    """Attach overlay-safe hook and wrapped caption lines to each highlight."""
     display_name = _display_video_name(video_name)
     captioned = []
 
@@ -31,14 +33,21 @@ def generate_captions(highlights: Iterable[dict], video_name: str, add_hashtags:
         categories = [str(category) for category in highlight.get("categories", [])]
         score = float(highlight.get("score", 0))
         hook = sanitize_overlay_text(_pick_hook(categories, score))
-        caption = sanitize_overlay_text(_caption_text(highlight, display_name, score))
+        caption_body = sanitize_overlay_text(_caption_text(highlight, display_name, score))
 
         if add_hashtags:
-            caption = sanitize_overlay_text(f"{caption} {DEFAULT_HASHTAGS}")
+            caption_body = sanitize_overlay_text(f"{caption_body} {DEFAULT_HASHTAGS}")
+
+        caption_lines = wrap_overlay_text(
+            caption_body,
+            max_chars=CAPTION_MAX_CHARS,
+            max_lines=CAPTION_MAX_LINES,
+        )
 
         updated = dict(highlight)
         updated["hook_text"] = hook
-        updated["caption_text"] = caption
+        updated["caption_text"] = " ".join(caption_lines)
+        updated["caption_lines"] = caption_lines
         updated["short_title"] = sanitize_overlay_text(_short_title(categories, hook))
         captioned.append(updated)
 

@@ -6,9 +6,10 @@ import re
 
 
 def sanitize_overlay_text(text: str) -> str:
-    """Make text safe for FFmpeg drawtext filter values."""
+    """Remove characters that break FFmpeg drawtext filters."""
     cleaned = str(text).replace("\r", " ").replace("\n", " ")
-    cleaned = cleaned.replace('"', "'")
+    cleaned = cleaned.replace('"', "")
+    cleaned = cleaned.replace("'", "")
     cleaned = cleaned.replace(":", " ")
     cleaned = cleaned.replace(";", " ")
     cleaned = cleaned.replace(",", " ")
@@ -33,7 +34,7 @@ def wrap_overlay_text(text: str, max_chars: int, max_lines: int) -> list[str]:
 
         if current:
             lines.append(" ".join(current))
-        current = [word]
+        current = [word[:max_chars]]
         if len(lines) >= max_lines:
             break
 
@@ -41,6 +42,15 @@ def wrap_overlay_text(text: str, max_chars: int, max_lines: int) -> list[str]:
         lines.append(" ".join(current))
 
     return lines or ["Gameplay highlight"]
+
+
+def validate_filter_chain(filter_chain: str) -> None:
+    """Validate FFmpeg filter syntax expectations before execution."""
+    if "drawtext=" in filter_chain and 'text="' not in filter_chain:
+        raise ValueError("Drawtext filters must use double-quoted text values.")
+
+    if re.search(r"text='", filter_chain):
+        raise ValueError("Filter chain contains single-quoted drawtext values.")
 
 
 def looks_like_uuid(value: str) -> bool:
