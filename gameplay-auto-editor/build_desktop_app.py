@@ -37,9 +37,10 @@ def main() -> int:
     ]
 
     for binary_name in ["ffmpeg", "ffprobe"]:
-        binary_path = shutil.which(binary_name)
+        binary_path = _find_binary(binary_name)
         if binary_path:
-            command.extend(["--add-binary", _data_arg(Path(binary_path), "bin")])
+            print(f"Bundling {binary_name}: {binary_path}")
+            command.extend(["--add-binary", _data_arg(binary_path, "bin")])
         else:
             print(f"Warning: {binary_name} was not found. Built app will require it on PATH.")
 
@@ -68,6 +69,27 @@ def _ensure_pyinstaller() -> None:
 
 def _data_arg(source: Path, destination: str) -> str:
     return f"{source}{os.pathsep}{destination}"
+
+
+def _find_binary(binary_name: str) -> Path | None:
+    """Find the real FFmpeg binary, avoiding Chocolatey shim executables."""
+    executable_name = binary_name + (".exe" if sys.platform.startswith("win") else "")
+
+    if sys.platform.startswith("win"):
+        chocolatey_root = Path(os.environ.get("ChocolateyInstall", r"C:\ProgramData\chocolatey"))
+        candidates = [
+            chocolatey_root / "lib" / "ffmpeg" / "tools" / "ffmpeg" / "bin" / executable_name,
+            chocolatey_root / "lib" / "ffmpeg-full" / "tools" / "ffmpeg" / "bin" / executable_name,
+        ]
+        for candidate in candidates:
+            if candidate.exists():
+                return candidate
+
+    binary_path = shutil.which(binary_name)
+    if not binary_path:
+        return None
+
+    return Path(binary_path)
 
 
 def _write_start_here(dist_dir: Path) -> None:
