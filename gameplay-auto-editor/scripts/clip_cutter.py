@@ -177,7 +177,7 @@ def _drawtext(text: str, font_size: int, y: int) -> str:
     font_part = ""
     font_file = _font_file()
     if font_file:
-        font_part = f"fontfile={font_file}:"
+        font_part = f"fontfile={_escape_font_file(font_file)}:"
 
     return (
         "drawtext="
@@ -227,12 +227,19 @@ def _escape_drawtext(text: str) -> str:
     )
 
 
+def _escape_font_file(path: str) -> str:
+    """Escape Windows drive letters and other colons for FFmpeg drawtext."""
+    normalized = path.replace("\\", "/")
+    return normalized.replace(":", "\\:")
+
+
 def _font_file() -> str:
     candidates = [
         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
         "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf",
         "/Library/Fonts/Arial Bold.ttf",
         "C:/Windows/Fonts/arialbd.ttf",
+        "C:/Windows/Fonts/arial.ttf",
     ]
     for candidate in candidates:
         if Path(candidate).exists():
