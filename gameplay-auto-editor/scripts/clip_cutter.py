@@ -1,12 +1,18 @@
-"""Cut highlight ranges and render vertical clips with FFmpeg."""
+"""Cut highlight ranges and render vertical short-form clips with FFmpeg."""
 
 from __future__ import annotations
 
 import json
+import logging
 import shutil
 import subprocess
 from pathlib import Path
 from typing import Iterable, List
+
+from scripts.render_settings import merge_render_config, resolve_font_path
+from scripts.text_utils import sanitize_overlay_text, wrap_overlay_text
+
+logger = logging.getLogger(__name__)
 
 
 def process_highlights(
@@ -16,6 +22,7 @@ def process_highlights(
     final_dir: str | Path,
     render_config: dict,
 ) -> List[dict]:
+    """Cut raw segments and render one vertical clip per highlight."""
     _ensure_ffmpeg()
 
     video_path = Path(video_path)
@@ -24,28 +31,48 @@ def process_highlights(
     processed_dir.mkdir(parents=True, exist_ok=True)
     final_dir.mkdir(parents=True, exist_ok=True)
 
-    rendered = []
+    settings = merge_render_config(render_config)
+    video_id = _safe_video_id(video_path.stem)
+    rendered: list[dict] = []
+
     for highlight in highlights:
-        clip_id = highlight["id"]
-        safe_stem = _safe_name(f"{video_path.stem}_{clip_id}")
-        processed_path = processed_dir / f"{safe_stem}_raw.mp4"
-        final_path = final_dir / f"{safe_stem}_vertical.mp4"
-        metadata_path = final_dir / f"{safe_stem}.json"
+        clip_index = _clip_index(highlight)
+        output_names = build_output_names(video_id, clip_index)
 
-        cut_clip(video_path, processed_path, highlight["start"], highlight["duration"], render_config)
-        render_vertical_clip(processed_path, final_path, highlight, render_config)
+        processed_path = processed_dir / output_names["raw"]
+        final_path = final_dir / output_names["vertical"]
+        metadata_path = final_dir / output_names["metadata"]
+
+        logger.info("Cutting raw segment for %s", output_names["vertical"])
+        cut_clip(video_path, processed_path, highlight["start"], highlight["duration"], settings)
+
+        logger.info("Rendering vertical clip %s", final_path.name)
+        render_vertical_clip(processed_path, final_path, highlight, settings)
+
         metadata_path.write_text(json.dumps(highlight, indent=2), encoding="utf-8")
-
         rendered.append(
             {
                 **highlight,
+                "video_id": video_id,
+                "clip_index": clip_index,
                 "processed_clip": str(processed_path),
                 "final_clip": str(final_path),
                 "metadata": str(metadata_path),
             }
         )
 
+    logger.info("Rendered %s vertical clip(s) to %s", len(rendered), final_dir)
     return rendered
+
+
+def build_output_names(video_id: str, clip_index: str) -> dict[str, str]:
+    """Standardize output filenames for raw, vertical, and metadata files."""
+    stem = f"{video_id}_highlight_{clip_index}"
+    return {
+        "raw": f"{stem}_raw.mp4",
+        "vertical": f"{stem}_vertical.mp4",
+        "metadata": f"{stem}.json",
+    }
 
 
 def cut_clip(
@@ -55,7 +82,8 @@ def cut_clip(
     duration: float,
     render_config: dict | None = None,
 ) -> None:
-    render_config = render_config or {}
+    """Extract a highlight segment while preserving audio."""
+    settings = merge_render_config(render_config)
     command = [
         "ffmpeg",
         "-y",
@@ -72,16 +100,16 @@ def cut_clip(
         "-c:v",
         "libx264",
         "-preset",
-        str(render_config.get("preset", "veryfast")),
+        str(settings["preset"]),
         "-crf",
-        str(render_config.get("video_crf", 23)),
+        str(settings["video_crf"]),
         "-c:a",
         "aac",
         "-movflags",
         "+faststart",
         str(output_path),
     ]
-    _run(command)
+    _run_ffmpeg(command, stage="cut_clip")
 
 
 def render_vertical_clip(
@@ -90,16 +118,15 @@ def render_vertical_clip(
     highlight: dict,
     render_config: dict,
 ) -> None:
+    """Scale, crop, and overlay hook/caption text for 1080x1920 export."""
+    settings = merge_render_config(render_config)
     filter_chain = build_vertical_filter_chain(
         hook_text=highlight.get("hook_text", "Wait for it"),
         caption_text=highlight.get("caption_text", highlight.get("summary", "")),
-        width=int(render_config.get("width", 1080)),
-        height=int(render_config.get("height", 1920)),
-        hook_font_size=int(render_config.get("top_hook_font_size", 64)),
-        caption_font_size=int(render_config.get("caption_font_size", 48)),
+        settings=settings,
     )
 
-    print(f"FFmpeg filter chain:\n{filter_chain}")
+    logger.info("FFmpeg filter chain:\n%s", filter_chain)
 
     command = [
         "ffmpeg",
@@ -115,9 +142,9 @@ def render_vertical_clip(
         "-c:v",
         "libx264",
         "-preset",
-        str(render_config.get("preset", "veryfast")),
+        str(settings["preset"]),
         "-crf",
-        str(render_config.get("video_crf", 23)),
+        str(settings["video_crf"]),
         "-c:a",
         "aac",
         "-shortest",
@@ -125,10 +152,11 @@ def render_vertical_clip(
         "+faststart",
         str(output_path),
     ]
-    _run(command)
+    _run_ffmpeg(command, stage="render_vertical_clip", filter_chain=filter_chain)
 
 
 def get_video_duration(video_path: str | Path) -> float:
+    """Return media duration in seconds using ffprobe."""
     _ensure_ffprobe()
     command = [
         "ffprobe",
@@ -140,7 +168,7 @@ def get_video_duration(video_path: str | Path) -> float:
         "default=noprint_wrappers=1:nokey=1",
         str(video_path),
     ]
-    result = _run(command)
+    result = _run_ffmpeg(command, stage="get_video_duration")
     try:
         return float(result.stdout.strip())
     except ValueError:
@@ -150,124 +178,120 @@ def get_video_duration(video_path: str | Path) -> float:
 def build_vertical_filter_chain(
     hook_text: str,
     caption_text: str,
-    width: int,
-    height: int,
-    hook_font_size: int,
-    caption_font_size: int,
+    settings: dict | None = None,
 ) -> str:
-    font_path = _font_file()
+    """Build a Windows-safe FFmpeg filter chain for vertical short-form export."""
+    cfg = merge_render_config(settings)
+    width = int(cfg["width"])
+    height = int(cfg["height"])
+    top_safe = int(cfg["top_safe_zone"])
+    bottom_safe = int(cfg["bottom_safe_zone"])
+    hook_font = int(cfg["top_hook_font_size"])
+    caption_font = int(cfg["caption_font_size"])
+    box_color = str(cfg["text_box_color"])
+    box_border = int(cfg["text_box_border"])
+    font_path = resolve_font_path(cfg.get("font_candidates"))
+
     filters: list[str] = [
         f"scale={width}:{height}:force_original_aspect_ratio=increase",
         f"crop={width}:{height}",
         "setsar=1",
     ]
 
-    hook_lines = _wrap_text(hook_text.upper(), max_chars=23, max_lines=2)
-    caption_lines = _wrap_text(caption_text, max_chars=34, max_lines=3)
+    hook_lines = wrap_overlay_text(
+        hook_text.upper(),
+        max_chars=int(cfg["hook_max_chars"]),
+        max_lines=int(cfg["hook_max_lines"]),
+    )
+    caption_lines = wrap_overlay_text(
+        caption_text,
+        max_chars=int(cfg["caption_max_chars"]),
+        max_lines=int(cfg["caption_max_lines"]),
+    )
 
-    y = 110
+    hook_y = top_safe
+    hook_line_gap = hook_font + 20
     for line in hook_lines:
-        filters.append(_drawtext_filter(line, hook_font_size, y, font_path))
-        y += hook_font_size + 22
+        filters.append(
+            _drawtext_filter(
+                text=line,
+                font_size=hook_font,
+                y=hook_y,
+                font_path=font_path,
+                box_color=box_color,
+                box_border=box_border,
+            )
+        )
+        hook_y += hook_line_gap
 
-    caption_start_y = height - 360
+    caption_block_height = len(caption_lines) * caption_font + max(0, len(caption_lines) - 1) * 18
+    caption_start_y = max(top_safe + hook_font + 40, height - bottom_safe - caption_block_height)
+
     for offset, line in enumerate(caption_lines):
         filters.append(
             _drawtext_filter(
-                line,
-                caption_font_size,
-                caption_start_y + offset * (caption_font_size + 18),
-                font_path,
+                text=line,
+                font_size=caption_font,
+                y=caption_start_y + offset * (caption_font + 18),
+                font_path=font_path,
+                box_color=box_color,
+                box_border=box_border,
             )
         )
 
     return ",".join(filters)
 
 
-def _drawtext_filter(text: str, font_size: int, y: int, font_path: str) -> str:
-    sanitized = _sanitize_drawtext_text(text)
-    parts = ["drawtext"]
-
+def _drawtext_filter(
+    text: str,
+    font_size: int,
+    y: int,
+    font_path: str,
+    box_color: str,
+    box_border: int,
+) -> str:
+    """Create one drawtext filter segment with sanitized text and escaped font path."""
+    sanitized = sanitize_overlay_text(text)
+    prefix = "drawtext"
     if font_path:
-        parts[0] = f"drawtext=fontfile={_escape_font_path(font_path)}"
+        prefix = f"drawtext=fontfile={escape_font_path(font_path)}"
 
     return (
-        f"{parts[0]}:"
+        f"{prefix}:"
         f'text="{sanitized}":'
         f"fontsize={font_size}:"
         "fontcolor=white:"
         "box=1:"
-        "boxcolor=black@0.6:"
-        "boxborderw=18:"
+        f"boxcolor={box_color}:"
+        f"boxborderw={box_border}:"
         "x=(w-text_w)/2:"
         f"y={y}"
     )
 
 
-def _sanitize_drawtext_text(text: str) -> str:
-    cleaned = str(text).replace("\r", " ").replace("\n", " ")
-    cleaned = cleaned.replace('"', "'")
-    cleaned = cleaned.replace(":", " ")
-    cleaned = cleaned.replace(",", " ")
-    cleaned = cleaned.replace("\\", " ")
-    cleaned = cleaned.replace("%", " percent")
-    return " ".join(cleaned.split())
-
-
-def _escape_font_path(path: str) -> str:
+def escape_font_path(path: str) -> str:
+    """Escape Windows drive-letter colons for FFmpeg filter syntax."""
     normalized = Path(path).as_posix()
     if len(normalized) >= 2 and normalized[1] == ":":
-        drive = normalized[0]
-        rest = normalized[2:]
-        return f"{drive}\\:{rest}"
+        return f"{normalized[0]}\\:{normalized[2:]}"
     return normalized.replace(":", "\\:")
 
 
-def _wrap_text(text: str, max_chars: int, max_lines: int) -> list[str]:
-    words = _sanitize_drawtext_text(text).split()
-    lines: list[str] = []
-    current: list[str] = []
-
-    for word in words:
-        trial = " ".join(current + [word])
-        if len(trial) <= max_chars:
-            current.append(word)
-            continue
-
-        if current:
-            lines.append(" ".join(current))
-        current = [word]
-        if len(lines) == max_lines:
-            break
-
-    if current and len(lines) < max_lines:
-        lines.append(" ".join(current))
-
-    return lines or ["Gameplay highlight"]
+def _clip_index(highlight: dict) -> str:
+    clip_id = str(highlight.get("id", "highlight_01"))
+    if clip_id.startswith("highlight_"):
+        return clip_id.split("_", 1)[1]
+    return clip_id
 
 
-def _font_file() -> str:
-    candidates = [
-        "C:/Windows/Fonts/arialbd.ttf",
-        "C:/Windows/Fonts/arial.ttf",
-        "/Library/Fonts/Arial Bold.ttf",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-        "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf",
-    ]
-    for candidate in candidates:
-        if Path(candidate).exists():
-            return candidate
-    return ""
-
-
-def _safe_name(name: str) -> str:
+def _safe_video_id(name: str) -> str:
     allowed = []
-    for char in name.lower():
+    for char in str(name).lower():
         if char.isalnum() or char in {"-", "_"}:
             allowed.append(char)
         elif char in {" ", "."}:
             allowed.append("_")
-    return "".join(allowed).strip("_") or "clip"
+    return "".join(allowed).strip("_") or "video"
 
 
 def _ensure_ffmpeg() -> None:
@@ -280,15 +304,22 @@ def _ensure_ffprobe() -> None:
         raise RuntimeError("ffprobe is required but was not found on PATH.")
 
 
-def _run(command: list[str]) -> subprocess.CompletedProcess:
+def _run_ffmpeg(
+    command: list[str],
+    *,
+    stage: str,
+    filter_chain: str | None = None,
+) -> subprocess.CompletedProcess:
+    """Run FFmpeg/ffprobe and include filter chain details when rendering fails."""
     result = subprocess.run(command, capture_output=True, text=True, check=False)
     if result.returncode != 0:
-        raise RuntimeError(
-            "Command failed:\n"
-            + " ".join(command)
-            + "\nSTDOUT:\n"
-            + result.stdout
-            + "\nSTDERR:\n"
-            + result.stderr
-        )
+        details = [
+            f"FFmpeg stage failed: {stage}",
+            "Command:",
+            " ".join(command),
+        ]
+        if filter_chain:
+            details.extend(["Filter chain:", filter_chain])
+        details.extend(["STDOUT:", result.stdout, "STDERR:", result.stderr])
+        raise RuntimeError("\n".join(details))
     return result

@@ -1,36 +1,45 @@
-"""Generate simple hook and caption text for selected clips."""
+"""Generate hook and caption text optimized for vertical short-form overlays."""
 
 from __future__ import annotations
 
 from typing import Iterable, List
 
+from scripts.text_utils import looks_like_uuid, sanitize_overlay_text
+
 
 CATEGORY_HOOKS = {
-    "kills": "Clean elimination!",
+    "kills": "Clean elimination",
     "deaths": "I did not see that coming",
-    "clutch plays": "Clutch or panic?",
+    "clutch plays": "Clutch or panic",
     "explosions": "Everything exploded",
-    "funny moments": "This went off-script",
+    "funny moments": "This went off script",
     "fails": "Instant regret",
     "high-action sequences": "Blink and you miss it",
     "fast movement or chaos": "Pure chaos",
     "emotional reactions": "The reaction says it all",
 }
 
+DEFAULT_HASHTAGS = "#gaming #highlights #shorts #clips"
+
 
 def generate_captions(highlights: Iterable[dict], video_name: str, add_hashtags: bool = True) -> List[dict]:
+    """Attach overlay-safe hook and caption text to each highlight."""
+    display_name = _display_video_name(video_name)
     captioned = []
+
     for highlight in highlights:
         categories = [str(category) for category in highlight.get("categories", [])]
-        hook = _pick_hook(categories, float(highlight.get("score", 0)))
-        caption = _caption_text(highlight, video_name)
+        score = float(highlight.get("score", 0))
+        hook = sanitize_overlay_text(_pick_hook(categories, score))
+        caption = sanitize_overlay_text(_caption_text(highlight, display_name, score))
+
         if add_hashtags:
-            caption = f"{caption} #gaming #highlights #clips"
+            caption = sanitize_overlay_text(f"{caption} {DEFAULT_HASHTAGS}")
 
         updated = dict(highlight)
         updated["hook_text"] = hook
         updated["caption_text"] = caption
-        updated["short_title"] = _short_title(categories, hook)
+        updated["short_title"] = sanitize_overlay_text(_short_title(categories, hook))
         captioned.append(updated)
 
     return captioned
@@ -49,13 +58,25 @@ def _pick_hook(categories: list[str], score: float) -> str:
     return "Wait for it"
 
 
-def _caption_text(highlight: dict, video_name: str) -> str:
-    summary = str(highlight.get("summary") or "Gameplay highlight.").rstrip(".")
-    score = int(round(float(highlight.get("score", 0))))
-    return f"{summary}. Viral score: {score}/100 from {video_name}."
+def _caption_text(highlight: dict, video_name: str, score: float) -> str:
+    summary = sanitize_overlay_text(str(highlight.get("summary") or "Gameplay highlight"))
+    summary = summary.rstrip(".")
+    score_int = int(round(score))
+
+    if video_name:
+        return f"{summary}. Viral score {score_int} out of 100 from {video_name}."
+    return f"{summary}. Viral score {score_int} out of 100."
 
 
 def _short_title(categories: list[str], hook: str) -> str:
     if categories:
         return f"{hook} - {categories[0].title()}"
     return hook
+
+
+def _display_video_name(video_name: str) -> str:
+    """Avoid showing UUID-like filenames in on-screen captions."""
+    cleaned = sanitize_overlay_text(video_name.replace("_", " "))
+    if looks_like_uuid(video_name) or len(cleaned) > 24:
+        return "this gameplay session"
+    return cleaned

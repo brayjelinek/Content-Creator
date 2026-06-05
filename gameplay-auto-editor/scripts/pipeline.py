@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import sys
 from pathlib import Path
@@ -16,6 +17,9 @@ from scripts.clip_cutter import get_video_duration, process_highlights
 from scripts.frame_extractor import extract_frames
 from scripts.highlight_detector import detect_highlights
 from scripts.vision_analyzer import VisionAnalyzer
+
+logging.basicConfig(level=logging.INFO, format="%(message)s")
+logger = logging.getLogger(__name__)
 
 
 def _user_data_dir() -> Path:
@@ -59,7 +63,9 @@ def run_pipeline(
     report_dir.mkdir(parents=True, exist_ok=True)
 
     vision_config = config.get("vision", {})
-    print(f"[1/5] Extracting frames from {input_video.name}...")
+    render_config = config.get("rendering", {})
+
+    _log_stage(1, "frame extraction", f"Sampling frames from {input_video.name}")
     frame_samples = extract_frames(
         input_video,
         frame_dir,
@@ -69,34 +75,40 @@ def run_pipeline(
     )
     if not frame_samples:
         raise RuntimeError("No frames were extracted. Check that the input is a valid video file.")
+    logger.info("Extracted %s frame sample(s) to %s", len(frame_samples), frame_dir)
 
-    print(f"[2/5] Analyzing {len(frame_samples)} frames with {vision_config.get('provider', 'heuristic')}...")
+    provider = vision_config.get("provider", "heuristic")
+    _log_stage(2, "vision analysis", f"Analyzing {len(frame_samples)} frame(s) with {provider}")
     analyzer = VisionAnalyzer(vision_config)
     analyses = analyzer.analyze_frames(frame_samples)
     _write_json(report_dir / f"{video_stem}_analysis.json", analyses)
+    logger.info("Saved analysis report to %s", report_dir / f"{video_stem}_analysis.json")
 
-    print("[3/5] Detecting highlight moments...")
+    _log_stage(3, "highlight detection", "Scoring and merging highlight moments")
     duration = get_video_duration(input_video)
     highlights = detect_highlights(analyses, duration, config.get("highlight_detection", {}))
     if not highlights:
         raise RuntimeError("No highlights could be detected from the sampled frames.")
+    logger.info("Detected %s highlight clip candidate(s)", len(highlights))
 
-    print("[4/5] Generating hooks and captions...")
+    _log_stage(4, "caption generation", "Building hook text and captions for overlays")
     captioned_highlights = generate_captions(
         highlights,
         video_name=video_stem,
-        add_hashtags=bool(config.get("rendering", {}).get("add_hashtags", True)),
+        add_hashtags=bool(render_config.get("add_hashtags", True)),
     )
     _write_json(report_dir / f"{video_stem}_highlights.json", captioned_highlights)
 
-    print("[5/5] Cutting and rendering vertical clips with FFmpeg...")
+    _log_stage(5, "ffmpeg render", "Cutting and rendering 1080x1920 vertical clips")
     rendered = process_highlights(
         input_video,
         captioned_highlights,
         paths["processed"],
         paths["final"],
-        config.get("rendering", {}),
+        render_config,
     )
+    for clip in rendered:
+        logger.info("Final clip ready: %s (score %s)", clip["final_clip"], clip.get("score"))
 
     report = {
         "input_video": str(input_video),
@@ -176,6 +188,10 @@ def _apply_env_overrides(config: Dict[str, Any]) -> Dict[str, Any]:
 
     config["vision"] = vision
     return config
+
+
+def _log_stage(step: int, name: str, message: str) -> None:
+    logger.info("[%s/5] %s: %s", step, name, message)
 
 
 def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:

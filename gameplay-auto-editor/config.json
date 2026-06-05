@@ -22,8 +22,17 @@
     "height": 1920,
     "video_crf": 23,
     "preset": "veryfast",
+    "top_safe_zone": 250,
+    "bottom_safe_zone": 300,
+    "left_right_safe_zone": 120,
     "top_hook_font_size": 64,
     "caption_font_size": 48,
+    "text_box_color": "black@0.6",
+    "text_box_border": 18,
+    "hook_max_chars": 22,
+    "hook_max_lines": 2,
+    "caption_max_chars": 32,
+    "caption_max_lines": 3,
     "add_hashtags": true
   }
 }
