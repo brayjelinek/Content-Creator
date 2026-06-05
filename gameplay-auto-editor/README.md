@@ -19,6 +19,8 @@ gameplay-auto-editor/
     pipeline.py
   config.json
   dashboard.py
+  install_desktop_launcher.py
+  launch_dashboard.sh
   run.py
   requirements.txt
   README.md
@@ -100,7 +102,29 @@ Set `"provider": "auto"` to use OpenAI if `OPENAI_API_KEY` exists, Anthropic if 
 
 ## Run with the dashboard
 
-The easiest way to use the tool is the browser dashboard:
+The easiest way to use the tool is the browser dashboard.
+
+### One-click launcher
+
+On Linux, create a desktop icon once:
+
+```bash
+python3 install_desktop_launcher.py
+```
+
+Then double-click **Gameplay Auto Editor** on your desktop.
+
+You can also double-click `launch_dashboard.sh` from the project folder, or run:
+
+```bash
+./launch_dashboard.sh
+```
+
+The launcher will create a local Python environment and install dependencies the first time it runs.
+
+### Manual dashboard command
+
+If you prefer the direct command:
 
 ```bash
 streamlit run dashboard.py
