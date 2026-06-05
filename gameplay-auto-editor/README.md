@@ -20,7 +20,10 @@ gameplay-auto-editor/
   config.json
   dashboard.py
   install_desktop_launcher.py
+  Launch Gameplay Auto Editor.bat
+  Launch Gameplay Auto Editor.command
   launch_dashboard.sh
+  NON_TECHNICAL_SETUP.md
   run.py
   requirements.txt
   README.md
@@ -106,7 +109,9 @@ The easiest way to use the tool is the browser dashboard.
 
 ### One-click launcher
 
-On Linux, create a desktop icon once:
+Important: if this is running in Cursor Cloud, the desktop icon is created on the remote cloud computer, not on your personal computer. To get an icon on your own desktop, download this project to your computer and run the launcher installer there.
+
+Create a desktop icon once:
 
 ```bash
 python3 install_desktop_launcher.py
@@ -114,13 +119,21 @@ python3 install_desktop_launcher.py
 
 Then double-click **Gameplay Auto Editor** on your desktop.
 
-You can also double-click `launch_dashboard.sh` from the project folder, or run:
+You can also double-click the launcher for your computer from the project folder:
+
+- Windows: `Launch Gameplay Auto Editor.bat`
+- Mac: `Launch Gameplay Auto Editor.command`
+- Linux: `launch_dashboard.sh`
+
+Or run:
 
 ```bash
 ./launch_dashboard.sh
 ```
 
 The launcher will create a local Python environment and install dependencies the first time it runs.
+
+For plain-English setup help, see `NON_TECHNICAL_SETUP.md`.
 
 ### Manual dashboard command
 
