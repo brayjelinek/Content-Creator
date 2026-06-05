@@ -47,9 +47,13 @@ def main() -> int:
     print("Running:", " ".join(command))
     subprocess.run(command, cwd=ROOT, check=True)
 
-    output = ROOT / "dist" / APP_NAME
+    dist_dir = ROOT / "dist"
+    output = dist_dir / APP_NAME
+    _write_start_here(dist_dir)
+    _write_top_level_launcher(dist_dir)
     print(f"\nBuild complete: {output}")
-    print("Copy this folder to the target computer and open the app inside it.")
+    print(f"Download or copy everything in: {dist_dir}")
+    print("Open START_HERE.txt for simple click-by-click instructions.")
     return 0
 
 
@@ -64,6 +68,84 @@ def _ensure_pyinstaller() -> None:
 
 def _data_arg(source: Path, destination: str) -> str:
     return f"{source}{os.pathsep}{destination}"
+
+
+def _write_start_here(dist_dir: Path) -> None:
+    if sys.platform.startswith("win"):
+        instructions = [
+            "Gameplay Auto Editor - Windows",
+            "",
+            "1. Unzip the downloaded artifact first.",
+            "2. Open the folder.",
+            "3. Double-click OPEN_GAMEPLAY_AUTO_EDITOR.bat.",
+            "",
+            "If that does not work, open this file instead:",
+            "Gameplay Auto Editor\\Gameplay Auto Editor.exe",
+            "",
+            "You do not need to choose another program to open it.",
+        ]
+    elif sys.platform == "darwin":
+        instructions = [
+            "Gameplay Auto Editor - Mac",
+            "",
+            "1. Unzip the downloaded artifact first.",
+            "2. Double-click Gameplay Auto Editor.app.",
+            "",
+            "If Mac blocks it:",
+            "1. Right-click Gameplay Auto Editor.app.",
+            "2. Click Open.",
+            "3. Click Open again if macOS asks for confirmation.",
+            "",
+            "You do not need to choose another program to open it.",
+        ]
+    else:
+        instructions = [
+            "Gameplay Auto Editor - Linux",
+            "",
+            "1. Unzip the downloaded artifact first.",
+            "2. Open the folder.",
+            "3. Double-click OPEN_GAMEPLAY_AUTO_EDITOR.sh.",
+            "",
+            "If your file manager asks what to do, choose Run or Execute.",
+            "If that does not work, open a terminal in this folder and run:",
+            "./OPEN_GAMEPLAY_AUTO_EDITOR.sh",
+        ]
+
+    (dist_dir / "START_HERE.txt").write_text("\n".join(instructions) + "\n", encoding="utf-8")
+
+
+def _write_top_level_launcher(dist_dir: Path) -> None:
+    if sys.platform.startswith("win"):
+        launcher = dist_dir / "OPEN_GAMEPLAY_AUTO_EDITOR.bat"
+        launcher.write_text(
+            "\n".join(
+                [
+                    "@echo off",
+                    'cd /d "%~dp0"',
+                    f'start "" "{APP_NAME}\\{APP_NAME}.exe"',
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+    elif sys.platform == "darwin":
+        # The .app bundle already lives at the top level and is the launcher.
+        return
+    else:
+        launcher = dist_dir / "OPEN_GAMEPLAY_AUTO_EDITOR.sh"
+        launcher.write_text(
+            "\n".join(
+                [
+                    "#!/usr/bin/env bash",
+                    "set -euo pipefail",
+                    'APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"',
+                    f'exec "$APP_DIR/{APP_NAME}/{APP_NAME}"',
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        launcher.chmod(launcher.stat().st_mode | 0o755)
 
 
 if __name__ == "__main__":
