@@ -48,6 +48,7 @@ class GameplayAutoEditorApp:
         self.max_clips_var = StringVar(value="5")
         self.min_score_var = StringVar(value="55")
         self.interval_var = StringVar(value="3")
+        self.max_frames_var = StringVar(value="10")
         self.status_var = StringVar(value="Choose a gameplay video to begin.")
         self.openai_key_var = StringVar(value="")
         self.key_status_var = StringVar(value=self._api_key_status())
@@ -82,6 +83,7 @@ class GameplayAutoEditorApp:
         self._add_spinbox(settings_row, "Sample clips", self.max_clips_var, 1, 10)
         self._add_spinbox(settings_row, "Minimum score", self.min_score_var, 0, 100)
         self._add_spinbox(settings_row, "Analyze every N seconds", self.interval_var, 1, 10)
+        self._add_spinbox(settings_row, "Max AI frames", self.max_frames_var, 1, 40)
 
         action_row = ttk.Frame(outer)
         action_row.pack(fill="x", pady=(0, 12))
@@ -304,6 +306,7 @@ class GameplayAutoEditorApp:
             "vision": {
                 "provider": self.provider_var.get(),
                 "analysis_interval_seconds": int(self.interval_var.get()),
+                "max_frames_to_analyze": int(self.max_frames_var.get()),
             },
             "highlight_detection": {
                 "max_clips": int(self.max_clips_var.get()),

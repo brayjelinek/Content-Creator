@@ -6,7 +6,7 @@
     "anthropic_api_key": "",
     "anthropic_model": "claude-3-5-haiku-latest",
     "analysis_interval_seconds": 3,
-    "max_frames_to_analyze": 24,
+    "max_frames_to_analyze": 10,
     "request_timeout_seconds": 60,
     "jpeg_quality": 85
   },

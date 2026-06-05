@@ -40,8 +40,14 @@ class VisionAnalyzer:
                 self.provider = "heuristic"
 
     def analyze_frames(self, frame_samples: Iterable[dict]) -> List[dict]:
+        frame_samples = list(frame_samples)
+        total = len(frame_samples)
         analyses = []
-        for sample in frame_samples:
+        for index, sample in enumerate(frame_samples, start=1):
+            print(
+                f"    Analyzing frame {index}/{total} at {sample.get('timestamp', 0)}s "
+                f"with {self.provider}..."
+            )
             analyses.append(self.analyze_frame(sample))
         return analyses
 

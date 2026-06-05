@@ -139,9 +139,14 @@ The app window lets you:
 1. Choose a gameplay video.
 2. Paste/save your OpenAI API key if needed.
 3. Choose how many sample clips to generate.
-4. Generate clips.
-5. Review each clip's score, hook, and caption.
-6. Play, open, export, or copy captions for clips you like.
+4. Choose how many AI frames to analyze.
+5. Generate clips.
+6. Review each clip's score, hook, and caption.
+7. Play, open, export, or copy captions for clips you like.
+
+OpenAI analysis sends sampled frames to the API. For first tests, use **Max AI frames = 5-10**. More frames can improve scouting, but it may take several minutes because each frame is analyzed by the vision model.
+
+For a quick workflow test, set **Vision mode = heuristic**. That skips paid API calls and should be much faster.
 
 ### Create a desktop icon
 

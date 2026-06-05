@@ -99,9 +99,20 @@ Gameplay Auto Editor
 2. A desktop app window opens.
 3. Choose a gameplay video.
 4. Paste/save your OpenAI API key if needed.
-5. Click **Generate sample clips**.
-6. Review the generated clips.
-7. Play, export, or copy captions for the clips you want to post.
+5. For the first test, set **Max AI frames** to 5-10.
+6. Click **Generate sample clips**.
+7. Review the generated clips.
+8. Play, export, or copy captions for the clips you want to post.
+
+## How long OpenAI analysis takes
+
+OpenAI mode analyzes sampled frames one at a time. A short test with 5-10 frames may take a few minutes. A larger run with 20+ frames can take much longer depending on API speed and rate limits.
+
+If the app seems slow:
+
+1. Close and reopen it.
+2. Set **Vision mode** to `heuristic` for a fast local test, or keep `openai` and lower **Max AI frames** to 5.
+3. Run the same video again.
 
 ## Packaging details
 
