@@ -114,13 +114,14 @@ The easiest non-technical way to use the tool is the native desktop app window.
 
 ### Best option: download a packaged app build
 
-For a true app-like experience, use the GitHub Actions artifact for your operating system:
+For a true app-like experience on Windows, use the GitHub Actions artifact:
 
 1. Run or open the **Build desktop app** workflow.
-2. Download the artifact for Windows, macOS, or Linux.
+2. Download `Gameplay-Auto-Editor-Windows`.
 3. Unzip it.
-4. Open **Gameplay Auto Editor** from the unzipped app folder.
-5. Move the app or launcher to your Desktop if you want a desktop icon.
+4. Open `START_HERE.txt`.
+5. Double-click `OPEN_GAMEPLAY_AUTO_EDITOR.bat`.
+6. Move the launcher to your Desktop if you want a desktop icon.
 
 This is the recommended non-technical testing path.
 
@@ -131,8 +132,7 @@ If you are running from the source project folder instead of a packaged artifact
 Double-click the launcher for your computer:
 
 - Windows: `Launch Gameplay Auto Editor.bat`
-- Mac: `Launch Gameplay Auto Editor.command`
-- Linux: `launch_desktop_app.sh`
+- Mac/Linux launchers are included for source-folder development, but the packaged release workflow currently builds Windows only.
 
 The app window lets you:
 

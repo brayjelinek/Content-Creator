@@ -12,12 +12,8 @@ on:
 
 jobs:
   build:
-    name: Build ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+    name: Build Windows app
+    runs-on: windows-latest
 
     defaults:
       run:
@@ -32,20 +28,7 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install FFmpeg on Linux
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg python3-tk
-        working-directory: .
-
-      - name: Install FFmpeg on macOS
-        if: runner.os == 'macOS'
-        run: brew install ffmpeg
-        working-directory: .
-
       - name: Install FFmpeg on Windows
-        if: runner.os == 'Windows'
         run: choco install ffmpeg -y
         working-directory: .
 
@@ -60,5 +43,5 @@ jobs:
       - name: Upload desktop app artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Gameplay-Auto-Editor-${{ runner.os }}
+          name: Gameplay-Auto-Editor-Windows
           path: gameplay-auto-editor/dist/

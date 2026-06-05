@@ -5,7 +5,7 @@ This project now has two ways to run:
 1. A native desktop app window.
 2. An optional browser dashboard.
 
-The native desktop app is the recommended non-technical option. The easiest version is the packaged app artifact from GitHub Actions, because it works like a normal downloaded app folder.
+The native desktop app is the recommended non-technical option. The easiest version is the Windows packaged app artifact from GitHub Actions, because it works like a normal downloaded app folder.
 
 ## Why you do not see the desktop icon
 
@@ -18,13 +18,11 @@ To see an icon on your own desktop, you need to download this project to your ow
 Use this when you want the closest thing to a normal app:
 
 1. Open the GitHub Actions build named **Build desktop app**.
-2. Download the artifact for your computer:
-   - `Gameplay-Auto-Editor-Windows`
-   - `Gameplay-Auto-Editor-macOS`
-   - `Gameplay-Auto-Editor-Linux`
+2. Download `Gameplay-Auto-Editor-Windows`.
 3. Unzip it.
-4. Open **Gameplay Auto Editor** from the unzipped folder.
-5. Optionally drag the app or launcher to your Desktop.
+4. Open `START_HERE.txt`.
+5. Double-click `OPEN_GAMEPLAY_AUTO_EDITOR.bat`.
+6. Optionally drag the launcher to your Desktop.
 
 That is the path intended for non-technical testing.
 
@@ -55,23 +53,9 @@ Double-click:
 Launch Gameplay Auto Editor.bat
 ```
 
-### Mac
+### Mac/Linux source launchers
 
-Double-click:
-
-```text
-Launch Gameplay Auto Editor.command
-```
-
-If Mac blocks it, right-click the file, choose **Open**, then approve it.
-
-### Linux
-
-Double-click:
-
-```text
-launch_desktop_app.sh
-```
+Mac/Linux source launchers are still present for development, but the packaged build currently targets Windows only.
 
 ### Option 2: Create a desktop icon
 
