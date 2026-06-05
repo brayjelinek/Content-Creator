@@ -23,7 +23,7 @@ def main() -> int:
         desktop_file = _install_linux_launcher(app_dir, desktop_dir)
 
     print(f"Created desktop launcher: {desktop_file}")
-    print(f"Double-click '{APP_NAME}' on your desktop to open the dashboard.")
+    print(f"Double-click '{APP_NAME}' on your desktop to open the app.")
     return 0
 
 
