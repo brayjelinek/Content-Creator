@@ -2,21 +2,40 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Iterable, List
+
+logger = logging.getLogger(__name__)
 
 
 def detect_highlights(analyses: Iterable[dict], video_duration: float, config: dict) -> List[dict]:
     """Select and merge highlight-worthy moments from analyzed frames."""
     analyses = sorted(analyses, key=lambda item: float(item.get("timestamp", 0)))
     if not analyses:
+        logger.warning("[HighlightDetector] No frame analyses available — cannot detect highlights.")
         return []
 
     min_score = float(config.get("min_score", 55))
     max_clips = int(config.get("max_clips", 5))
     merge_distance = float(config.get("merge_distance_seconds", 6))
 
+    logger.info("[HighlightDetector] Applying min_score threshold: %.2f", min_score)
+    logger.info("[HighlightDetector] Raw frame scores:")
+    for item in analyses:
+        logger.info(
+            "[HighlightDetector]   t=%.2fs score=%.2f categories=%s summary=%s",
+            float(item.get("timestamp", 0)),
+            float(item.get("viral_score", 0)),
+            item.get("categories", []),
+            item.get("summary", ""),
+        )
+
     candidates = [item for item in analyses if float(item.get("viral_score", 0)) >= min_score]
     if not candidates:
+        logger.warning(
+            "[HighlightDetector] No frames met min_score %.2f — falling back to strongest frame.",
+            min_score,
+        )
         candidates = [max(analyses, key=lambda item: float(item.get("viral_score", 0)))]
         candidates[0]["reason"] = (
             candidates[0].get("reason", "")
@@ -52,6 +71,17 @@ def detect_highlights(analyses: Iterable[dict], video_duration: float, config: d
                 "source_frame": candidate.get("frame_path"),
                 "raw_analysis": candidate,
             }
+        )
+
+    logger.info("[HighlightDetector] Accepted %s highlight(s):", len(highlights))
+    for highlight in highlights:
+        logger.info(
+            "[HighlightDetector]   %s t=%.2fs score=%.2f range=%.2fs-%.2fs",
+            highlight["id"],
+            highlight["timestamp"],
+            highlight["score"],
+            highlight["start"],
+            highlight["end"],
         )
 
     return highlights

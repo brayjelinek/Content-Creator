@@ -70,7 +70,7 @@ def run_pipeline(
     vision_config = config.get("vision", {})
     render_config = config.get("rendering", {})
 
-    logger.info("[Pipeline] Extracting frames from %s", input_video.name)
+    logger.info("[Pipeline] Extracting frames...")
     frame_samples = extract_frames(
         input_video,
         frame_dir,
@@ -79,24 +79,39 @@ def run_pipeline(
         jpeg_quality=int(vision_config.get("jpeg_quality", 85)),
     )
     if not frame_samples:
+        logger.error("[Pipeline] No frames extracted — check that the input is a valid video file.")
         raise RuntimeError("No frames were extracted. Check that the input is a valid video file.")
-    logger.info("[Pipeline] Extracted %s frame sample(s)", len(frame_samples))
+    logger.info("[Pipeline] Extracted %s frame sample(s) from %s", len(frame_samples), input_video.name)
 
     provider = vision_config.get("provider", "heuristic")
     if provider == "heuristic":
         logger.info("[Pipeline] Running heuristic analysis...")
     else:
-        logger.info("[Pipeline] Running %s analysis on %s frame(s)", provider, len(frame_samples))
+        logger.info("[Pipeline] Running %s analysis on %s frame(s)...", provider, len(frame_samples))
     analyzer = VisionAnalyzer(vision_config)
     analyses = analyzer.analyze_frames(frame_samples)
     _write_json(report_dir / f"{video_stem}_analysis.json", analyses)
 
     duration = get_video_duration(input_video)
+    logger.info("[Pipeline] Video duration: %.2fs", duration)
     highlights = detect_highlights(analyses, duration, config.get("highlight_detection", {}))
-    if not highlights:
-        raise RuntimeError("No highlights could be detected from the sampled frames.")
+    logger.info("[Pipeline] Highlights detected: %s", len(highlights))
 
-    logger.info("[Pipeline] Detected %s highlight moment(s)", len(highlights))
+    if not highlights:
+        logger.warning("[Pipeline] No highlights detected — stopping before render.")
+        report = {
+            "input_video": str(input_video),
+            "duration_seconds": round(duration, 2),
+            "frames_analyzed": len(frame_samples),
+            "clips_created": 0,
+            "clips": [],
+            "log_file": str(log_path),
+        }
+        _write_json(report_dir / f"{video_stem}_run_report.json", report)
+        logger.warning("[Pipeline] Final clips generated: 0")
+        logger.warning("[Pipeline] No clips were generated — check logs above.")
+        return report
+
     for highlight in highlights:
         logger.info(
             "[Pipeline] Highlight %s at %.2fs (score %.2f, %.2fs-%.2fs)",
@@ -116,13 +131,14 @@ def run_pipeline(
     )
     _write_json(report_dir / f"{video_stem}_highlights.json", captioned_highlights)
 
-    logger.info("[Pipeline] Rendering vertical clips")
+    logger.info("[Pipeline] Starting clip rendering...")
     rendered = process_highlights(
         video_path=input_video,
         highlights=captioned_highlights,
         processed_dir=paths["processed"],
         final_dir=paths["final"],
         render_config=render_config,
+        video_duration=duration,
     )
     for clip in rendered:
         logger.info(
@@ -130,6 +146,10 @@ def run_pipeline(
             clip["final_clip"],
             clip.get("score"),
         )
+
+    logger.info("[Pipeline] Final clips generated: %s", len(rendered))
+    if len(rendered) == 0:
+        logger.warning("[Pipeline] No clips were generated — check logs above.")
 
     report = {
         "input_video": str(input_video),

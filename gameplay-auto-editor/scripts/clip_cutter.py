@@ -9,8 +9,15 @@ import subprocess
 from pathlib import Path
 from typing import Iterable, List
 
+from scripts.pipeline_validation import (
+    validate_filter_chain_ready,
+    validate_font_path,
+    validate_highlight_timestamps,
+    validate_output_file_exists,
+    validate_processed_clip_exists,
+)
 from scripts.render_settings import merge_render_config, resolve_font_path
-from scripts.text_utils import sanitize_overlay_text, validate_filter_chain, wrap_overlay_text
+from scripts.text_utils import sanitize_overlay_text, wrap_overlay_text
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +28,7 @@ def process_highlights(
     processed_dir: str | Path,
     final_dir: str | Path,
     render_config: dict,
+    video_duration: float | None = None,
 ) -> List[dict]:
     """Render one vertical clip per highlight, continuing when one render fails."""
     settings = merge_render_config(render_config)
@@ -36,11 +44,15 @@ def process_highlights(
                 final_dir=final_dir,
                 render_config=settings,
                 video_id=video_id,
+                video_duration=video_duration,
             )
             if clip:
                 rendered.append(clip)
         except Exception as exc:  # noqa: BLE001 - continue remaining highlights
             logger.error("[FFmpeg] Highlight %s failed: %s", highlight.get("id"), exc)
+            if isinstance(exc, RuntimeError) and "STDERR:" in str(exc):
+                stderr = str(exc).split("STDERR:", 1)[-1].strip()
+                logger.error("[FFmpeg] stderr: %s", stderr)
 
     logger.info("[FFmpeg] Rendered %s vertical clip(s) to %s", len(rendered), final_dir)
     return rendered
@@ -53,6 +65,7 @@ def process_single_highlight(
     final_dir: str | Path,
     render_config: dict,
     video_id: str | None = None,
+    video_duration: float | None = None,
 ) -> dict | None:
     """Cut and render exactly one highlight into final_clips."""
     _ensure_ffmpeg()
@@ -72,11 +85,23 @@ def process_single_highlight(
     final_path = final_dir / output_names["vertical"]
     metadata_path = final_dir / output_names["metadata"]
 
+    if video_duration is None:
+        video_duration = get_video_duration(video_path)
+
+    validate_highlight_timestamps(highlight, video_duration)
+
     logger.info("[FFmpeg] Cutting raw segment for %s", output_names["vertical"])
     cut_clip(video_path, processed_path, highlight["start"], highlight["duration"], settings)
+    validate_processed_clip_exists(processed_path)
 
     logger.info("[FFmpeg] Rendering vertical clip %s", final_path.name)
-    render_vertical_clip(processed_path, final_path, highlight, settings)
+    render_vertical_clip(
+        processed_path,
+        final_path,
+        highlight,
+        settings,
+        video_duration=video_duration,
+    )
 
     validate_vertical_output(
         final_path,
@@ -145,6 +170,7 @@ def cut_clip(
     ]
     logger.info("[FFmpeg] Running command: %s", " ".join(command))
     _run_ffmpeg(command, stage="cut_clip")
+    validate_output_file_exists(output_path)
 
 
 def render_vertical_clip(
@@ -152,9 +178,14 @@ def render_vertical_clip(
     output_path: str | Path,
     highlight: dict,
     render_config: dict,
+    video_duration: float | None = None,
 ) -> None:
     """Scale, crop, and overlay hook/caption text for 1080x1920 export."""
+    input_path = Path(input_path)
+    output_path = Path(output_path)
     settings = merge_render_config(render_config)
+    font_path = resolve_font_path(settings.get("font_candidates"))
+
     filter_chain = build_vertical_filter_chain(
         hook_text=highlight.get("hook_text", "Wait for it"),
         caption_text=highlight.get("caption_text", highlight.get("summary", "")),
@@ -162,9 +193,17 @@ def render_vertical_clip(
         settings=settings,
     )
 
-    validate_filter_chain(filter_chain)
-    print(f"[FFmpeg] Filter chain: {filter_chain}")
+    if not input_path.exists():
+        logger.error("[FFmpeg] Input file missing: %s", input_path)
+        raise FileNotFoundError(f"Input file missing: {input_path}")
+    logger.info("[FFmpeg] Input file exists: %s", input_path)
+    logger.info("[FFmpeg] Output path: %s", output_path)
     logger.info("[FFmpeg] Filter chain: %s", filter_chain)
+
+    validate_font_path(font_path)
+    validate_filter_chain_ready(filter_chain)
+    if video_duration is not None:
+        validate_highlight_timestamps(highlight, video_duration)
 
     command = [
         "ffmpeg",
@@ -190,8 +229,18 @@ def render_vertical_clip(
         "+faststart",
         str(output_path),
     ]
-    logger.info("[FFmpeg] Running command: %s", " ".join(command))
-    _run_ffmpeg(command, stage="render_vertical_clip", filter_chain=filter_chain)
+
+    try:
+        logger.info("[FFmpeg] Running command: %s", " ".join(command))
+        _run_ffmpeg(command, stage="render_vertical_clip", filter_chain=filter_chain)
+        validate_output_file_exists(output_path)
+    except Exception as exc:
+        logger.error("[FFmpeg] Render failed for %s: %s", highlight.get("id"), exc)
+        logger.error("[FFmpeg] Command: %s", " ".join(command))
+        if isinstance(exc, RuntimeError) and "STDERR:" in str(exc):
+            stderr = str(exc).split("STDERR:", 1)[-1].strip()
+            logger.error("[FFmpeg] stderr: %s", stderr)
+        raise
 
 
 def build_vertical_filter_chain(
