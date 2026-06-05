@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+.venv/
+.env
+
+raw_clips/*
+!raw_clips/.gitkeep
+
+processed_clips/*
+!processed_clips/.gitkeep
+
+final_clips/*
+!final_clips/.gitkeep
+
+models/*
+!models/.gitkeep
