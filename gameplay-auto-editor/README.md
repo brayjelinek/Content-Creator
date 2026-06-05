@@ -19,13 +19,18 @@ gameplay-auto-editor/
     pipeline.py
   config.json
   dashboard.py
+  desktop_app.py
+  build_desktop_app.py
   install_desktop_launcher.py
   Launch Gameplay Auto Editor.bat
   Launch Gameplay Auto Editor.command
+  launch_desktop_app.sh
   launch_dashboard.sh
   NON_TECHNICAL_SETUP.md
+  PACKAGING.md
   run.py
   requirements.txt
+  requirements-build.txt
   README.md
 ```
 
@@ -103,11 +108,26 @@ export ANTHROPIC_API_KEY="YOUR_KEY"
 
 Set `"provider": "auto"` to use OpenAI if `OPENAI_API_KEY` exists, Anthropic if `ANTHROPIC_API_KEY` exists, or the local heuristic if neither exists.
 
-## Run with the dashboard
+## Run as a desktop app
 
-The easiest way to use the tool is the browser dashboard.
+The easiest non-technical way to use the tool is the native desktop app window.
 
-### One-click launcher
+Double-click the launcher for your computer:
+
+- Windows: `Launch Gameplay Auto Editor.bat`
+- Mac: `Launch Gameplay Auto Editor.command`
+- Linux: `launch_desktop_app.sh`
+
+The app window lets you:
+
+1. Choose a gameplay video.
+2. Paste/save your OpenAI API key if needed.
+3. Choose how many sample clips to generate.
+4. Generate clips.
+5. Review each clip's score, hook, and caption.
+6. Play, open, export, or copy captions for clips you like.
+
+### Create a desktop icon
 
 Important: if this is running in Cursor Cloud, the desktop icon is created on the remote cloud computer, not on your personal computer. To get an icon on your own desktop, download this project to your computer and run the launcher installer there.
 
@@ -119,25 +139,34 @@ python3 install_desktop_launcher.py
 
 Then double-click **Gameplay Auto Editor** on your desktop.
 
-You can also double-click the launcher for your computer from the project folder:
+The launcher will create a local Python environment and install dependencies the first time it runs.
 
-- Windows: `Launch Gameplay Auto Editor.bat`
-- Mac: `Launch Gameplay Auto Editor.command`
-- Linux: `launch_dashboard.sh`
+For plain-English setup help, see `NON_TECHNICAL_SETUP.md`.
 
-Or run:
+### Build a packaged app
+
+To package the app as a normal desktop executable:
+
+```bash
+python -m pip install -r requirements.txt -r requirements-build.txt
+python build_desktop_app.py
+```
+
+The built app appears in `dist/Gameplay Auto Editor/`.
+
+See `PACKAGING.md` for GitHub Actions builds and platform-specific notes.
+
+## Run with the browser dashboard
+
+The browser dashboard is still available as an alternate interface.
+
+Run:
 
 ```bash
 ./launch_dashboard.sh
 ```
 
-The launcher will create a local Python environment and install dependencies the first time it runs.
-
-For plain-English setup help, see `NON_TECHNICAL_SETUP.md`.
-
-### Manual dashboard command
-
-If you prefer the direct command:
+Or use the direct command:
 
 ```bash
 streamlit run dashboard.py

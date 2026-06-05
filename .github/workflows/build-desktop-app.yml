@@ -1,0 +1,64 @@
+name: Build desktop app
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - "cursor/**"
+    paths:
+      - "gameplay-auto-editor/**"
+      - ".github/workflows/build-desktop-app.yml"
+
+jobs:
+  build:
+    name: Build ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    defaults:
+      run:
+        working-directory: gameplay-auto-editor
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install FFmpeg on Linux
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+        working-directory: .
+
+      - name: Install FFmpeg on macOS
+        if: runner.os == 'macOS'
+        run: brew install ffmpeg
+        working-directory: .
+
+      - name: Install FFmpeg on Windows
+        if: runner.os == 'Windows'
+        run: choco install ffmpeg -y
+        working-directory: .
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt -r requirements-build.txt
+
+      - name: Build desktop app
+        run: python build_desktop_app.py
+
+      - name: Upload desktop app artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Gameplay-Auto-Editor-${{ runner.os }}
+          path: gameplay-auto-editor/dist/

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import platform
-import shutil
 from pathlib import Path
 
 
@@ -29,29 +28,50 @@ def main() -> int:
 
 
 def _install_windows_launcher(app_dir: Path, desktop_dir: Path) -> Path:
-    source = app_dir / f"{APP_NAME}.bat"
-    destination = desktop_dir / source.name
-    if not source.exists():
-        raise FileNotFoundError(f"Missing launcher script: {source}")
+    launcher = app_dir / f"{APP_NAME}.bat"
+    destination = desktop_dir / launcher.name
+    if not launcher.exists():
+        raise FileNotFoundError(f"Missing launcher script: {launcher}")
 
-    shutil.copyfile(source, destination)
+    destination.write_text(
+        "\n".join(
+            [
+                "@echo off",
+                f'cd /d "{app_dir}"',
+                f'call "{launcher}"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
     return destination
 
 
 def _install_mac_launcher(app_dir: Path, desktop_dir: Path) -> Path:
-    source = app_dir / f"{APP_NAME}.command"
-    destination = desktop_dir / source.name
-    if not source.exists():
-        raise FileNotFoundError(f"Missing launcher script: {source}")
+    launcher = app_dir / "launch_desktop_app.sh"
+    destination = desktop_dir / f"{APP_NAME}.command"
+    if not launcher.exists():
+        raise FileNotFoundError(f"Missing launcher script: {launcher}")
 
-    shutil.copyfile(source, destination)
+    destination.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env bash",
+                "set -euo pipefail",
+                f'cd "{app_dir}"',
+                f'exec "{launcher}"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
     destination.chmod(destination.stat().st_mode | 0o755)
-    _make_executable(app_dir / "launch_dashboard.sh")
+    _make_executable(launcher)
     return destination
 
 
 def _install_linux_launcher(app_dir: Path, desktop_dir: Path) -> Path:
-    launch_script = app_dir / "launch_dashboard.sh"
+    launch_script = app_dir / "launch_desktop_app.sh"
     desktop_file = desktop_dir / f"{APP_NAME}.desktop"
 
     if not launch_script.exists():

@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 from pathlib import Path
 from typing import Any, Dict
 
@@ -17,7 +18,28 @@ from scripts.highlight_detector import detect_highlights
 from scripts.vision_analyzer import VisionAnalyzer
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+def _user_data_dir() -> Path:
+    app_dir_name = "GameplayAutoEditor"
+    if sys.platform.startswith("win"):
+        base = Path(os.getenv("LOCALAPPDATA") or Path.home() / "AppData" / "Local")
+    elif sys.platform == "darwin":
+        base = Path.home() / "Library" / "Application Support"
+    else:
+        base = Path(os.getenv("XDG_DATA_HOME") or Path.home() / ".local" / "share")
+
+    path = base / app_dir_name
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _runtime_root() -> Path:
+    if getattr(sys, "frozen", False):
+        return _user_data_dir()
+    return Path(__file__).resolve().parents[1]
+
+
+PROJECT_ROOT = _runtime_root()
+BUNDLED_ROOT = Path(getattr(sys, "_MEIPASS", PROJECT_ROOT))
 
 
 def run_pipeline(
@@ -90,6 +112,10 @@ def run_pipeline(
 def load_config(config_path: str | Path | None = None) -> Dict[str, Any]:
     load_dotenv(PROJECT_ROOT / ".env")
     path = Path(config_path) if config_path else PROJECT_ROOT / "config.json"
+    if not path.exists() and not config_path:
+        bundled_config = BUNDLED_ROOT / "config.json"
+        if bundled_config.exists():
+            path = bundled_config
     if not path.exists():
         raise FileNotFoundError(f"Config file not found: {path}")
     config = json.loads(path.read_text(encoding="utf-8"))

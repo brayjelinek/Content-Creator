@@ -2,4 +2,4 @@
 set -euo pipefail
 
 APP_DIR="$(cd "$(dirname "$0")" && pwd)"
-"$APP_DIR/launch_dashboard.sh"
+"$APP_DIR/launch_desktop_app.sh"
