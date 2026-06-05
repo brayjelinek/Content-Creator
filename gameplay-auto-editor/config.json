@@ -1,0 +1,29 @@
+{
+  "vision": {
+    "provider": "heuristic",
+    "openai_api_key": "",
+    "openai_model": "gpt-4o-mini",
+    "anthropic_api_key": "",
+    "anthropic_model": "claude-3-5-haiku-latest",
+    "analysis_interval_seconds": 3,
+    "max_frames_to_analyze": 10,
+    "request_timeout_seconds": 60,
+    "jpeg_quality": 85
+  },
+  "highlight_detection": {
+    "max_clips": 5,
+    "min_score": 55,
+    "clip_seconds_before": 4,
+    "clip_seconds_after": 8,
+    "merge_distance_seconds": 6
+  },
+  "rendering": {
+    "width": 1080,
+    "height": 1920,
+    "video_crf": 23,
+    "preset": "veryfast",
+    "top_hook_font_size": 64,
+    "caption_font_size": 48,
+    "add_hashtags": true
+  }
+}
