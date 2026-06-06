@@ -170,6 +170,10 @@ def _pick_impact_text(highlight: dict, categories: list[str], theme: str = "defa
 
 def _overlay_caption_text(highlight: dict, score: float) -> str:
     """Short on-screen caption optimized for 40-char line wrapping."""
+    transcript = sanitize_overlay_text(str(highlight.get("transcript_snippet") or "")).strip()
+    if transcript:
+        return transcript[:120].rstrip()
+
     summary = sanitize_overlay_text(str(highlight.get("summary") or "Gameplay highlight"))
     summary = summary.rstrip(".")
     if len(summary) > 72:

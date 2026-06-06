@@ -37,6 +37,8 @@ def summarize_enhancements(clip: dict) -> list[str]:
         badges.append("Impact zoom")
     if clip.get("smart_reframe_applied"):
         badges.append("Smart reframe")
+    if clip.get("viral_ass_captions_applied"):
+        badges.append("Styled captions")
     return badges
 
 
@@ -59,6 +61,8 @@ def build_clip_report_entry(clip: dict) -> dict[str, Any]:
         "viral_captions_burned": bool(clip.get("viral_captions_burned")),
         "viral_sound_effect_applied": bool(clip.get("viral_sound_effect_applied")),
         "smart_reframe_applied": bool(clip.get("smart_reframe_applied")),
+        "viral_ass_captions_applied": bool(clip.get("viral_ass_captions_applied")),
         "reframe_layout": clip.get("reframe_layout"),
+        "transcription_provider": clip.get("transcription_provider"),
         "enhancements_applied": summarize_enhancements(clip),
     }

@@ -128,6 +128,8 @@ class GameplayAutoEditorApp:
             side=LEFT,
             padx=8,
         )
+        ttk.Button(action_row, text="Export all clips...", command=self.export_all_clips).pack(side=LEFT, padx=(0, 8))
+        ttk.Button(action_row, text="Copy all captions", command=self.copy_all_captions).pack(side=LEFT)
         ttk.Label(action_row, textvariable=self.status_var).pack(side=LEFT, padx=12)
 
         api_frame = ttk.LabelFrame(outer, text="Optional: AI vision key", padding=10)
@@ -607,6 +609,58 @@ class GameplayAutoEditorApp:
         self.root.clipboard_clear()
         self.root.clipboard_append(text)
         self.status_var.set("Social caption copied.")
+
+    def copy_all_captions(self) -> None:
+        report = self.report or {}
+        clips = self._clips_for_display(report)
+        if not clips:
+            messagebox.showinfo(APP_TITLE, "Generate clips first.")
+            return
+        lines = []
+        for index, clip in enumerate(clips, start=1):
+            caption = clip.get("social_caption") or clip.get("caption_text") or ""
+            if caption:
+                lines.append(f"Clip {index}: {caption}")
+        if not lines:
+            messagebox.showinfo(APP_TITLE, "No captions available to copy.")
+            return
+        self.root.clipboard_clear()
+        self.root.clipboard_append("\n\n".join(lines))
+        self.status_var.set(f"Copied {len(lines)} caption(s).")
+
+    def export_all_clips(self) -> None:
+        report = self.report or {}
+        clips = self._clips_for_display(report)
+        if not clips:
+            messagebox.showinfo(APP_TITLE, "Generate clips first.")
+            return
+
+        destination = filedialog.askdirectory(title="Choose export folder for all clips")
+        if not destination:
+            return
+
+        export_dir = Path(destination)
+        export_dir.mkdir(parents=True, exist_ok=True)
+        copied = 0
+        for clip in clips:
+            source = self._resolve_clip_file(clip, report)
+            if source is None or not source.exists():
+                continue
+            target = export_dir / source.name
+            shutil.copyfile(source, target)
+            copied += 1
+
+        captions_path = export_dir / "captions.txt"
+        caption_lines = []
+        for index, clip in enumerate(clips, start=1):
+            caption = clip.get("social_caption") or clip.get("caption_text") or ""
+            if caption:
+                caption_lines.append(f"Clip {index}: {caption}")
+        if caption_lines:
+            captions_path.write_text("\n\n".join(caption_lines), encoding="utf-8")
+
+        messagebox.showinfo(APP_TITLE, f"Exported {copied} clip(s) to:\n{export_dir}")
+        self.status_var.set(f"Exported {copied} clip(s).")
 
     def preview_frame(self, clip: dict) -> None:
         frame_path = clip.get("source_frame")

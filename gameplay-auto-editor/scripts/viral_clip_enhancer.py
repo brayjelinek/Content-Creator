@@ -17,6 +17,7 @@ from scripts.clip_cutter import (
     probe_has_audio,
 )
 from scripts.moment_validator import is_validated_for_slowmo
+from scripts.ass_captions import build_ass_subtitle_path, escape_ass_filter_path
 from scripts.render_settings import merge_render_config, resolve_font_path
 from scripts.text_utils import sanitize_overlay_text, wrap_overlay_text
 
@@ -43,6 +44,8 @@ DEFAULT_VIRAL_CONFIG: dict[str, Any] = {
     "sound_effects_enabled": False,
     "sound_effect_volume": 0.35,
     "sound_effect_path": "",
+    "styled_ass_captions_enabled": False,
+    "ass_karaoke_enabled": False,
 }
 
 
@@ -98,6 +101,8 @@ def enhance_rendered_clip(clip_path: str | Path, highlight: dict, render_config:
         highlight["viral_slowmo_applied"] = use_slowmo
         highlight["viral_captions_burned"] = burn_captions
         highlight["zoom_applied"] = bool(viral.get("zoom_enabled", True))
+        if apply_styled_ass_captions(clip_path, highlight, settings, viral):
+            highlight["viral_ass_captions_applied"] = True
         applied = []
         if burn_captions:
             applied.append("hook/caption overlays")
@@ -110,6 +115,8 @@ def enhance_rendered_clip(clip_path: str | Path, highlight: dict, render_config:
             applied.append("pre-impact slow-mo")
         if highlight.get("viral_sound_effect_applied"):
             applied.append("impact SFX")
+        if highlight.get("viral_ass_captions_applied"):
+            applied.append("styled ASS captions")
         logger.info("[Enhancer] Applied to %s: %s", clip_path.name, ", ".join(applied))
         return True
     except Exception as exc:  # noqa: BLE001 - never break pipeline
@@ -420,3 +427,69 @@ def _resolve_sound_effect_path(viral: dict, settings: dict) -> Path | None:
         if candidate.exists() and candidate.stat().st_size > 0:
             return candidate.resolve()
     return None
+
+
+def apply_styled_ass_captions(
+    clip_path: Path,
+    highlight: dict,
+    settings: dict,
+    viral: dict,
+) -> bool:
+    """Burn styled ASS subtitles on top of an already polished clip."""
+    if not viral.get("styled_ass_captions_enabled", False):
+        return False
+
+    duration = get_video_duration(clip_path)
+    if duration <= 0.5:
+        return False
+
+    karaoke_words = highlight.get("transcript_words") if viral.get("ass_karaoke_enabled", False) else None
+    ass_path = build_ass_subtitle_path(
+        highlight,
+        settings,
+        duration,
+        karaoke_words=karaoke_words,
+    )
+    if not ass_path:
+        return False
+
+    temp_output = clip_path.with_suffix(".ass.tmp.mp4")
+    escaped = escape_ass_filter_path(ass_path)
+    command = [
+        "ffmpeg",
+        "-y",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-i",
+        str(clip_path),
+        "-vf",
+        f"subtitles='{escaped}'",
+        "-c:v",
+        "libx264",
+        "-preset",
+        str(settings["preset"]),
+        "-crf",
+        str(settings["video_crf"]),
+        "-c:a",
+        "copy",
+        "-movflags",
+        "+faststart",
+        str(temp_output),
+    ]
+
+    try:
+        result = subprocess.run(command, capture_output=True, text=True, check=False)
+        if result.returncode != 0 or not temp_output.exists():
+            logger.info("[Enhancer] ASS captions skipped: %s", (result.stderr or "").strip())
+            return False
+        temp_output.replace(clip_path)
+        logger.info("[Enhancer] Applied styled ASS captions to %s", clip_path.name)
+        return True
+    except Exception as exc:  # noqa: BLE001
+        logger.info("[Enhancer] ASS captions skipped: %s", exc)
+        return False
+    finally:
+        ass_path.unlink(missing_ok=True)
+        if temp_output.exists() and temp_output != clip_path:
+            temp_output.unlink(missing_ok=True)

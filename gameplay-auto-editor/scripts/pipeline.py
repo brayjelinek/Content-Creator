@@ -27,6 +27,7 @@ from scripts.microclip_sampler import extract_microclips
 from scripts.moment_validator import enrich_highlight_validation
 from scripts.ocr_utils import initialize_ocr
 from scripts.pipeline_validation import preflight_pipeline
+from scripts.transcription import enrich_highlights_with_transcription
 from scripts.ui_events import (
     STAGE_DETECTING,
     STAGE_EXTRACTING,
@@ -203,6 +204,15 @@ def run_pipeline(
         percent=60,
         message="Generating hooks and captions...",
     )
+    transcription_cfg = config.get("transcription", {})
+    if transcription_cfg.get("enabled"):
+        enrich_highlights_with_transcription(
+            highlights,
+            input_video,
+            transcription_cfg,
+            vision_config,
+        )
+
     logger.info("[Pipeline] Generating hooks and captions")
     captioned_highlights = generate_captions(
         highlights,
@@ -497,6 +507,7 @@ def _summarize_run_enhancements(clips: list[dict]) -> dict[str, int]:
         "viral_captions_burned": 0,
         "viral_sound_effect_applied": 0,
         "smart_reframe_applied": 0,
+        "viral_ass_captions_applied": 0,
     }
     for clip in clips:
         for key in summary:

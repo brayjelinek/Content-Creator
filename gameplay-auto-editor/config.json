@@ -14,8 +14,20 @@
       "smart_reframe": false,
       "sound_effects": false,
       "chat_signals": false,
+      "styled_ass_captions": false,
+      "whisper_transcription": false,
       "batch_queue": true
     }
+  },
+  "transcription": {
+    "enabled": false,
+    "provider": "whisper_cli",
+    "model": "tiny",
+    "language": "",
+    "use_for_captions": true,
+    "use_for_hooks": false,
+    "max_segment_seconds": 30,
+    "openai_model": "whisper-1"
   },
   "chat_signals": {
     "enabled": false,
@@ -136,7 +148,9 @@
       "min_signal_count": 1,
       "sound_effects_enabled": false,
       "sound_effect_volume": 0.35,
-      "sound_effect_path": ""
+      "sound_effect_path": "",
+      "styled_ass_captions_enabled": false,
+      "ass_karaoke_enabled": false
     }
   }
 }

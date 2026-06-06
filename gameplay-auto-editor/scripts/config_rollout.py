@@ -20,8 +20,21 @@ DEFAULT_ROLLOUT: dict[str, Any] = {
         "smart_reframe": False,
         "sound_effects": False,
         "chat_signals": False,
+        "styled_ass_captions": False,
+        "whisper_transcription": False,
         "batch_queue": True,
     },
+}
+
+DEFAULT_TRANSCRIPTION: dict[str, Any] = {
+    "enabled": False,
+    "provider": "whisper_cli",
+    "model": "tiny",
+    "language": "",
+    "use_for_captions": True,
+    "use_for_hooks": False,
+    "max_segment_seconds": 30,
+    "openai_model": "whisper-1",
 }
 
 DEFAULT_CHAT_SIGNALS: dict[str, Any] = {
@@ -54,6 +67,10 @@ def apply_rollout_defaults(config: dict[str, Any]) -> dict[str, Any]:
     chat.update(dict(merged.get("chat_signals") or {}))
     merged["chat_signals"] = chat
 
+    transcription = dict(DEFAULT_TRANSCRIPTION)
+    transcription.update(dict(merged.get("transcription") or {}))
+    merged["transcription"] = transcription
+
     highlight = dict(merged.get("highlight_detection") or {})
     weights = dict(highlight.get("weighted_scoring") or {})
     weights.setdefault("audio_spike_bonus", 10)
@@ -74,6 +91,9 @@ def apply_rollout_defaults(config: dict[str, Any]) -> dict[str, Any]:
         smart["enabled"] = bool(smart.get("enabled", False))
     if not rollout["optional_features"].get("sound_effects", False):
         viral["sound_effects_enabled"] = bool(viral.get("sound_effects_enabled", False))
+    if not rollout["optional_features"].get("styled_ass_captions", False):
+        viral["styled_ass_captions_enabled"] = bool(viral.get("styled_ass_captions_enabled", False))
+        viral["ass_karaoke_enabled"] = bool(viral.get("ass_karaoke_enabled", False))
 
     rendering["viral_enhancements"] = viral
     rendering["smart_reframe"] = smart
@@ -81,6 +101,8 @@ def apply_rollout_defaults(config: dict[str, Any]) -> dict[str, Any]:
 
     if not rollout["optional_features"].get("chat_signals", False):
         merged["chat_signals"]["enabled"] = bool(merged["chat_signals"].get("enabled", False))
+    if not rollout["optional_features"].get("whisper_transcription", False):
+        merged["transcription"]["enabled"] = bool(merged["transcription"].get("enabled", False))
 
     return merged
 
@@ -105,5 +127,8 @@ def build_features_applied(config: dict[str, Any], report: dict[str, Any] | None
         "smart_reframe": bool(enhancements.get("smart_reframe_applied", 0)) or bool(smart.get("enabled", False)),
         "chat_signals": bool(chat.get("enabled", False)),
         "sound_effects": bool(viral.get("sound_effects_enabled", False)),
+        "styled_ass_captions": bool(enhancements.get("viral_ass_captions_applied", 0))
+        or bool(viral.get("styled_ass_captions_enabled", False)),
+        "whisper_transcription": bool((config.get("transcription") or {}).get("enabled", False)),
         "batch_queue": bool(optional.get("batch_queue", True)),
     }
