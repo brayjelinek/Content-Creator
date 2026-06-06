@@ -116,6 +116,8 @@ def apply_rollout_defaults(config: dict[str, Any]) -> dict[str, Any]:
 
     if rollout["stable_features"].get("viral_polish_always_on", True):
         viral.setdefault("always_apply_polish", True)
+        viral.setdefault("require_validation_for_slowmo", False)
+        viral.setdefault("require_validation_for_effects", False)
     if rollout["stable_features"].get("burn_captions_on_overlay_fail", True):
         viral.setdefault("burn_captions_when_overlay_missing", True)
     if not rollout["optional_features"].get("smart_reframe", False):

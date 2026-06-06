@@ -319,6 +319,7 @@ def _execute_pipeline(
         )
         try:
             enhanced = enhance_rendered_clip(clip["final_clip"], clip, render_config)
+            _persist_clip_sidecar(clip)
             if enhanced:
                 clip["final_clip"] = str(Path(clip["final_clip"]).resolve())
                 clip["viral_enhanced"] = True
@@ -549,6 +550,22 @@ def _build_fallback_highlight(
         "selection_mode": selection_mode,
         "quality_tier": "fallback",
     }
+
+
+def _persist_clip_sidecar(clip: dict) -> None:
+    """Rewrite final_clips/*.json after enhancement so metadata matches the rendered file."""
+    raw_meta = clip.get("metadata")
+    if not raw_meta:
+        return
+    meta_path = Path(raw_meta)
+    if not meta_path.parent.exists():
+        return
+    payload = {
+        key: value
+        for key, value in clip.items()
+        if key not in {"processed_clip"}
+    }
+    meta_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
 def _summarize_run_enhancements(clips: list[dict]) -> dict[str, int]:

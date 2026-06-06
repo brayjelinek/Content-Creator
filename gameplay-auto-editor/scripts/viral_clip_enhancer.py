@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -124,8 +125,16 @@ def enhance_rendered_clip(clip_path: str | Path, highlight: dict, render_config:
             highlight["viral_ass_captions_applied"] = True
         logger.info("[Enhancer] Filters applied: %s", filter_summary)
         logger.info("[Enhancer] Using enhanced clip path: %s", resolved_path)
-        if filter_summary in {"", "format polish"}:
-            logger.warning("[Enhancer] No visible effects were applied — treating as fallback to raw clip")
+        if filter_summary in {"", "format polish"} and not any(
+            (
+                use_slowmo,
+                use_premium,
+                burn_captions,
+                burn_hook,
+                highlight.get("text_overlay_recovered"),
+            )
+        ):
+            logger.warning("[Enhancer] No visible effects were applied — clip left unchanged")
             return False
         return True
     except Exception as exc:  # noqa: BLE001 - never break pipeline
@@ -160,10 +169,17 @@ def _resolve_effect_flags(highlight: dict, viral: dict) -> tuple[bool, bool, boo
     synthetic_fallback = is_synthetic_fallback_highlight(highlight)
     always_polish = bool(viral.get("always_apply_polish", True))
     overlay_missing = not highlight.get("overlay_applied", True)
-    burn_captions = bool(
-        viral.get("burn_captions_when_overlay_missing", True) and overlay_missing
-    ) or bool(viral.get("always_burn_hook_text", False))
-    burn_hook = bool(viral.get("always_burn_hook_text", False)) or burn_captions
+
+    if overlay_missing:
+        burn_captions = bool(
+            viral.get("burn_captions_when_overlay_missing", True)
+            or viral.get("always_burn_hook_text", False)
+        )
+        burn_hook = bool(viral.get("always_burn_hook_text", False) or burn_captions)
+    else:
+        # Pass 1 already burned hook/caption text — do not stack duplicate drawtext layers.
+        burn_captions = False
+        burn_hook = False
 
     if synthetic_fallback:
         return False, False, burn_captions or overlay_missing, burn_hook or overlay_missing
@@ -171,9 +187,6 @@ def _resolve_effect_flags(highlight: dict, viral: dict) -> tuple[bool, bool, boo
     if always_polish:
         use_slowmo = bool(viral.get("slowmo_enabled", True))
         use_premium = True
-        if overlay_missing:
-            burn_captions = True
-            burn_hook = True
     else:
         use_slowmo = bool(viral.get("slowmo_enabled", True)) and is_validated_for_slowmo(highlight, viral)
         use_premium = is_validated_for_premium_effects(highlight, viral)
@@ -316,34 +329,53 @@ def _run_ffmpeg_enhance(
     ]
     if sfx_path:
         command.extend(["-i", str(sfx_path)])
-    command.extend(
-        [
-            "-filter_complex",
-            filter_chain,
-            "-map",
-            "[vout]",
-        ]
+    filter_script = _write_filter_script(filter_chain)
+    try:
+        command.extend(
+            [
+                "-filter_complex_script",
+                str(filter_script),
+                "-map",
+                "[vout]",
+            ]
+        )
+        if has_audio or sfx_path:
+            command.extend(["-map", "[aout]", "-c:a", "aac"])
+        command.extend(
+            [
+                "-c:v",
+                "libx264",
+                "-preset",
+                str(settings["preset"]),
+                "-crf",
+                str(settings["video_crf"]),
+                "-movflags",
+                "+faststart",
+                str(output_path),
+            ]
+        )
+        result = run_quiet(command, filter_chain=filter_chain)
+        if result.returncode != 0:
+            raise RuntimeError(result.stderr.strip() or "FFmpeg enhancement failed")
+        if not output_path.exists() or output_path.stat().st_size <= 0:
+            raise RuntimeError("Enhanced output missing or empty")
+    finally:
+        filter_script.unlink(missing_ok=True)
+
+
+def _write_filter_script(filter_chain: str) -> Path:
+    """Write a filter_complex chain to disk for reliable Windows parsing."""
+    handle = tempfile.NamedTemporaryFile(
+        mode="w",
+        suffix=".txt",
+        prefix="gae_enhance_filter_",
+        delete=False,
+        encoding="utf-8",
     )
-    if has_audio or sfx_path:
-        command.extend(["-map", "[aout]", "-c:a", "aac"])
-    command.extend(
-        [
-            "-c:v",
-            "libx264",
-            "-preset",
-            str(settings["preset"]),
-            "-crf",
-            str(settings["video_crf"]),
-            "-movflags",
-            "+faststart",
-            str(output_path),
-        ]
-    )
-    result = run_quiet(command, filter_chain=filter_chain)
-    if result.returncode != 0:
-        raise RuntimeError(result.stderr.strip() or "FFmpeg enhancement failed")
-    if not output_path.exists() or output_path.stat().st_size <= 0:
-        raise RuntimeError("Enhanced output missing or empty")
+    handle.write(filter_chain)
+    handle.flush()
+    handle.close()
+    return Path(handle.name)
 
 
 def build_baseline_polish_chain(

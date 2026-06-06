@@ -134,6 +134,7 @@ def process_single_highlight(
         logger.error("[FFmpeg] Overlay render failed for %s: %s", highlight.get("id"), exc)
         logger.warning("[FFmpeg] Retrying %s without text overlays (vertical-only fallback).", final_path.name)
         render_vertical_clip_base(render_source, final_path, render_settings)
+        overlay_applied = _recover_text_overlays_on_clip(final_path, highlight, render_settings, overlay_error)
 
     validate_vertical_output(
         final_path,
@@ -160,6 +161,30 @@ def process_single_highlight(
         "overlay_applied": overlay_applied,
         "overlay_error": overlay_error,
     }
+
+
+def _recover_text_overlays_on_clip(
+    clip_path: Path,
+    highlight: dict,
+    render_settings: dict,
+    prior_error: str = "",
+) -> bool:
+    """Burn hook/caption text onto a plain vertical clip before the enhancer pass."""
+    temp_output = clip_path.with_suffix(".overlay.tmp.mp4")
+    try:
+        apply_text_overlays_to_clip(clip_path, temp_output, highlight, render_settings)
+        temp_output.replace(clip_path)
+        highlight["text_overlay_recovered"] = True
+        logger.info("[FFmpeg] Text overlays recovered on %s after vertical fallback", clip_path.name)
+        return True
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[FFmpeg] Text overlay recovery failed for %s: %s", clip_path.name, exc)
+        if prior_error:
+            highlight["overlay_error"] = f"{prior_error}; recovery: {exc}"
+        else:
+            highlight["overlay_error"] = str(exc)
+        temp_output.unlink(missing_ok=True)
+        return False
 
 
 def apply_text_overlays_to_clip(
