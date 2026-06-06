@@ -82,12 +82,47 @@ def run_pipeline(
     progress_callback: ProgressCallback | None = None,
 ) -> dict:
     """Run the full clip generation workflow for one input video."""
+    paths = ensure_project_dirs()
+    output_dir = str(paths["final"].resolve())
+    clips_ready_emitted = False
+    try:
+        report = _execute_pipeline(
+            video_path,
+            config_path=config_path,
+            config_override=config_override,
+            progress_callback=progress_callback,
+            paths=paths,
+        )
+        clips_ready_emitted = True
+        return report
+    except Exception as exc:
+        if not clips_ready_emitted:
+            emit_clips_ready(
+                progress_callback,
+                clip_paths=[],
+                clips=[],
+                output_dir=output_dir,
+                percent=100,
+                failure_reason="pipeline_error",
+            )
+            emit_ui_notice(progress_callback, f"[UI] Pipeline stopped early: {exc}")
+        raise
+
+
+def _execute_pipeline(
+    video_path: str | Path,
+    config_path: str | Path | None = None,
+    config_override: dict | None = None,
+    progress_callback: ProgressCallback | None = None,
+    paths: dict | None = None,
+) -> dict:
+    """Internal pipeline body — callers should use run_pipeline()."""
     config = load_config(config_path)
     if config_override:
         config = _deep_merge(config, config_override)
 
     reset_video_counter()
-    paths = ensure_project_dirs()
+    paths = paths or ensure_project_dirs()
     emit_progress(
         progress_callback,
         stage=STAGE_LOADING,

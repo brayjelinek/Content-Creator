@@ -21,6 +21,23 @@ def create_button(
     return ttk.Button(parent, text=label, style=style, command=command)
 
 
+def create_input(
+    parent: tk.Misc,
+    *,
+    textvariable=None,
+    show: str | None = None,
+    width: int = 36,
+    style: str = "TEntry",
+) -> ttk.Entry:
+    """Modern text input aligned with the design system."""
+    kwargs: dict = {"style": style, "width": width}
+    if textvariable is not None:
+        kwargs["textvariable"] = textvariable
+    if show is not None:
+        kwargs["show"] = show
+    return ttk.Entry(parent, **kwargs)
+
+
 class SectionCard(tk.Frame):
     """Card container with optional title, padding, and simulated shadow."""
 
@@ -210,6 +227,34 @@ class FormField(ttk.Frame):
     def attach(self, widget: tk.Misc) -> tk.Misc:
         widget.pack(anchor=W, pady=(DS.space.xs, 0))
         return widget
+
+
+class ModernInput(FormField):
+    """Labeled input field with consistent spacing and typography."""
+
+    def __init__(
+        self,
+        master: tk.Misc,
+        label: str,
+        *,
+        textvariable=None,
+        show: str | None = None,
+        width: int = 36,
+        style: str = "TEntry",
+    ):
+        super().__init__(master, label)
+        self.entry = create_input(
+            self,
+            textvariable=textvariable,
+            show=show,
+            width=width,
+            style=style,
+        )
+        self.entry.pack(anchor=W, pady=(DS.space.xs, 0))
+
+    @property
+    def widget(self) -> ttk.Entry:
+        return self.entry
 
 
 class SmoothProgressAnimator:

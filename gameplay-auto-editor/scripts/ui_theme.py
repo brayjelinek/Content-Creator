@@ -63,6 +63,7 @@ class AppTheme:
         cls.SPACING_MD = DS.space.md
         cls.SPACING_LG = DS.space.lg
         cls.SPACING_XL = DS.space.xl
+        cls.SPACING_XXL = DS.space.xxl
 
         root.configure(bg=BG)
         try:
@@ -92,6 +93,19 @@ class AppTheme:
         ):
             style.configure(name, background=SURFACE_ELEVATED, foreground=TEXT, font=font)
 
+        for name, font in (
+            ("H1OnBg.TLabel", fonts.h1),
+            ("H2OnBg.TLabel", fonts.h2),
+            ("H3OnBg.TLabel", fonts.h3),
+            ("H4OnBg.TLabel", fonts.h4),
+            ("H5OnBg.TLabel", fonts.h5),
+            ("H6OnBg.TLabel", fonts.h6),
+            ("BodyOnBg.TLabel", fonts.body),
+            ("CaptionOnBg.TLabel", fonts.caption),
+        ):
+            style.configure(name, background=BG, foreground=TEXT, font=font)
+        style.configure("CaptionOnBg.TLabel", foreground=TEXT_MUTED)
+
         style.configure("TLabel", background=BG, foreground=TEXT, font=fonts.body)
         style.configure("Muted.TLabel", background=BG, foreground=TEXT_MUTED, font=fonts.caption)
         style.configure("Surface.TLabel", background=SURFACE, foreground=TEXT, font=fonts.body)
@@ -119,6 +133,19 @@ class AppTheme:
         style.map(
             "TButton",
             background=[("active", SURFACE_HOVER), ("pressed", BORDER), ("disabled", SURFACE)],
+            foreground=[("disabled", TEXT_DIM)],
+        )
+        style.configure(
+            "Danger.TButton",
+            background=cls._c("danger"),
+            foreground="#ffffff",
+            borderwidth=0,
+            padding=(DS.space.md, DS.space.sm),
+            font=fonts.button,
+        )
+        style.map(
+            "Danger.TButton",
+            background=[("active", "#dc2626"), ("pressed", cls._c("danger")), ("disabled", SURFACE_HOVER)],
             foreground=[("disabled", TEXT_DIM)],
         )
         style.configure(

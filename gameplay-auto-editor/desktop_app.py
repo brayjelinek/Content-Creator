@@ -28,11 +28,13 @@ from scripts.ui_components import (
     ClipsPanel,
     EmptyState,
     FormField,
+    ModernInput,
     SectionCard,
     ShimmerPlaceholder,
     SmoothProgressAnimator,
     StepStrip,
     create_button,
+    create_input,
 )
 
 
@@ -280,54 +282,74 @@ class GameplayAutoEditorApp:
         self._build_integrations_tabs(integrations)
 
     def _build_integrations_tabs(self, notebook: ttk.Notebook) -> None:
-        social_tab = ttk.Frame(notebook, style="Surface.TFrame", padding=10)
+        social_tab = ttk.Frame(notebook, style="CardSurface.TFrame", padding=AppTheme.SPACING_MD)
         notebook.add(social_tab, text=copy.TAB_SHARE)
         self.social_frame = social_tab
         ttk.Label(
             social_tab,
             text=copy.TAB_SHARE_HELP,
-            style="Muted.TLabel",
+            style="Caption.TLabel",
             wraplength=560,
-        ).pack(anchor=W)
+        ).pack(anchor=W, pady=(0, AppTheme.SPACING_MD))
+
         for platform, label in (
             ("youtube", "YouTube Shorts"),
             ("tiktok", "TikTok"),
             ("instagram", "Instagram Reels"),
         ):
-            row = ttk.Frame(social_tab, style="Surface.TFrame")
-            row.pack(fill="x", pady=(8, 0))
-            ttk.Label(row, text=label, width=16, style="Surface.TLabel").pack(side=LEFT)
-            ttk.Label(row, textvariable=self.social_status_vars[platform], style="Muted.TLabel", wraplength=280).pack(
-                side=LEFT, padx=(0, 8)
-            )
-            ttk.Button(row, text="Connect", style="Ghost.TButton", command=lambda p=platform: self.connect_platform(p)).pack(
-                side=LEFT
-            )
-            ttk.Button(
-                row,
-                text="Disconnect",
+            row = SectionCard(social_tab, padding=AppTheme.SPACING_MD, shadow="subtle")
+            row.pack(fill="x", pady=(0, AppTheme.SPACING_SM))
+            header = ttk.Frame(row.content, style="CardSurface.TFrame")
+            header.pack(fill="x")
+            ttk.Label(header, text=label, style="H6.TLabel").pack(side=LEFT)
+            ttk.Label(
+                header,
+                textvariable=self.social_status_vars[platform],
+                style="CardMuted.TLabel",
+                wraplength=280,
+            ).pack(side=LEFT, padx=(AppTheme.SPACING_MD, 0), fill="x", expand=True)
+            actions = ttk.Frame(row.content, style="CardSurface.TFrame")
+            actions.pack(fill="x", pady=(AppTheme.SPACING_SM, 0))
+            create_button(
+                actions,
+                "Connect",
+                style="Primary.TButton",
+                icon="🔗",
+                command=lambda p=platform: self.connect_platform(p),
+            ).pack(side=LEFT)
+            create_button(
+                actions,
+                "Disconnect",
                 style="Ghost.TButton",
                 command=lambda p=platform: self.disconnect_platform(p),
-            ).pack(side=LEFT, padx=(6, 0))
+            ).pack(side=LEFT, padx=(AppTheme.SPACING_SM, 0))
 
-        api_tab = ttk.Frame(notebook, style="Surface.TFrame", padding=10)
+        api_tab = ttk.Frame(notebook, style="CardSurface.TFrame", padding=AppTheme.SPACING_MD)
         notebook.add(api_tab, text=copy.TAB_SMARTER)
-        ttk.Label(api_tab, textvariable=self.key_status_var, style="Muted.TLabel", wraplength=560).pack(anchor=W)
-        api_row = ttk.Frame(api_tab, style="Surface.TFrame")
-        api_row.pack(fill="x", pady=(8, 0))
-        ttk.Label(api_row, text="OpenAI key", style="Surface.TLabel").pack(side=LEFT)
-        ttk.Entry(api_row, textvariable=self.openai_key_var, show="*", width=42).pack(side=LEFT, padx=(8, 8))
-        ttk.Button(api_row, text="Save", style="Ghost.TButton", command=self.save_openai_key).pack(side=LEFT)
+        ttk.Label(api_tab, textvariable=self.key_status_var, style="Caption.TLabel", wraplength=560).pack(
+            anchor=W, pady=(0, AppTheme.SPACING_MD)
+        )
+        api_field = ModernInput(
+            api_tab,
+            "OpenAI API key",
+            textvariable=self.openai_key_var,
+            show="*",
+            width=42,
+        )
+        api_field.pack(fill="x", pady=(0, AppTheme.SPACING_SM))
+        create_button(api_tab, "Save key", style="Primary.TButton", icon="💾", command=self.save_openai_key).pack(
+            anchor=W
+        )
 
-        ocr_tab = ttk.Frame(notebook, style="Surface.TFrame", padding=10)
+        ocr_tab = ttk.Frame(notebook, style="CardSurface.TFrame", padding=AppTheme.SPACING_MD)
         notebook.add(ocr_tab, text=copy.TAB_KILLFEED)
-        ttk.Label(ocr_tab, textvariable=self.ocr_status_var, style="Muted.TLabel", wraplength=560).pack(anchor=W)
+        ttk.Label(ocr_tab, textvariable=self.ocr_status_var, style="Caption.TLabel", wraplength=560).pack(anchor=W)
         ttk.Label(
             ocr_tab,
-            text="Tesseract: https://github.com/UB-Mannheim/tesseract/wiki",
-            style="Muted.TLabel",
+            text="Install Tesseract for killfeed OCR: https://github.com/UB-Mannheim/tesseract/wiki",
+            style="CardMuted.TLabel",
             wraplength=560,
-        ).pack(anchor=W, pady=(6, 0))
+        ).pack(anchor=W, pady=(AppTheme.SPACING_SM, 0))
 
     def _build_copilot_panel(self, parent: ttk.Frame) -> None:
         parent.pack_propagate(False)
@@ -361,7 +383,7 @@ class GameplayAutoEditorApp:
 
         composer = ttk.Frame(card.content, style="CardSurface.TFrame")
         composer.pack(fill="x", pady=(AppTheme.SPACING_SM, 0))
-        self.agent_entry = ttk.Entry(composer, textvariable=self.agent_input_var, style="Copilot.TEntry")
+        self.agent_entry = create_input(composer, textvariable=self.agent_input_var, style="Copilot.TEntry", width=40)
         self.agent_entry.pack(fill="x")
         self.agent_entry.bind("<Return>", lambda _event: self.agent_send_message())
         create_button(composer, copy.BTN_ASK, style="Primary.TButton", command=self.agent_send_message).pack(
@@ -724,6 +746,15 @@ class GameplayAutoEditorApp:
         self.stage_var.set(copy.STATUS_FAILED)
         self._hide_shimmer()
         self._append_progress(error_text)
+        failure_report = {
+            "clips": [],
+            "clips_ready": [],
+            "clips_created": 0,
+            "failure_reason": "pipeline_error",
+            "output_dir": str((PROJECT_ROOT / "final_clips").resolve()),
+        }
+        self.report = failure_report
+        self._show_results(failure_report)
         messagebox.showerror(APP_TITLE, "Clip creation failed. See the activity log below for details.")
 
     def _resolve_clip_file(self, clip: dict, report: dict | None = None) -> Path | None:
