@@ -11,15 +11,17 @@ import threading
 import traceback
 from contextlib import redirect_stdout
 from pathlib import Path
-from tkinter import BOTH, END, LEFT, W, Canvas, filedialog, messagebox
+from tkinter import BOTH, END, LEFT, RIGHT, W, X, Y, BOTTOM, TOP, Canvas, filedialog, messagebox
 from tkinter import DoubleVar, StringVar, Text, Tk
 from tkinter import ttk
+import tkinter as tk
 
 from scripts.clip_metadata import quality_tier, summarize_enhancements
 from scripts.embedded_agent.advisor import EmbeddedAgentAdvisor
 from scripts.pipeline import PROJECT_ROOT, load_config, run_pipeline
 from scripts.social_publish.manager import SocialPublishManager
 from scripts.ui_logging import attach_ui_log_handler, detach_ui_log_handler
+from scripts.ui_theme import AppTheme
 
 
 APP_TITLE = "Gameplay Auto Editor"
@@ -41,8 +43,10 @@ class GameplayAutoEditorApp:
     def __init__(self, root: Tk):
         self.root = root
         self.root.title(APP_TITLE)
-        self.root.geometry("1040x760")
-        self.root.minsize(900, 650)
+        self.root.geometry("1280x820")
+        self.root.minsize(1024, 700)
+        self.theme = AppTheme.apply(self.root)
+        self.copilot_visible = True
 
         self.output_queue: queue.Queue = queue.Queue()
         self.selected_video: Path | None = None
@@ -86,211 +90,290 @@ class GameplayAutoEditorApp:
         self.agent_advisor.update_context(ui_settings=self._ui_settings_snapshot())
 
     def _build_ui(self) -> None:
-        outer = ttk.Frame(self.root, padding=18)
-        outer.pack(fill=BOTH, expand=True)
+        shell = ttk.Frame(self.root, padding=(16, 14))
+        shell.pack(fill=BOTH, expand=True)
 
-        header = ttk.Frame(outer)
-        header.pack(fill="x")
-        ttk.Label(header, text=APP_TITLE, font=("Arial", 22, "bold")).pack(anchor=W)
+        top = ttk.Frame(shell)
+        top.pack(fill="x", pady=(0, 12))
+        title_block = ttk.Frame(top)
+        title_block.pack(side=LEFT, fill="x", expand=True)
+        ttk.Label(title_block, text=APP_TITLE, style="Title.TLabel").pack(anchor=W)
         ttk.Label(
-            header,
-            text="Upload gameplay, generate vertical clips, review the winners, and open or export the ones you like.",
-        ).pack(anchor=W, pady=(4, 14))
+            title_block,
+            text="Gameplay → vertical clips → review → export",
+            style="Subtitle.TLabel",
+        ).pack(anchor=W, pady=(2, 0))
 
-        controls = ttk.LabelFrame(outer, text="1. Select video and clip settings", padding=14)
-        controls.pack(fill="x", pady=(0, 12))
+        top_actions = ttk.Frame(top)
+        top_actions.pack(side=RIGHT)
+        self.copilot_toggle_btn = ttk.Button(
+            top_actions,
+            text="Hide Copilot",
+            style="Ghost.TButton",
+            command=self.toggle_copilot_panel,
+        )
+        self.copilot_toggle_btn.pack(side=RIGHT, padx=(8, 0))
+        ttk.Label(top_actions, textvariable=self.status_var, style="Muted.TLabel").pack(side=RIGHT)
 
-        file_row = ttk.Frame(controls)
-        file_row.pack(fill="x", pady=(0, 10))
-        ttk.Button(file_row, text="Choose gameplay video", command=self.choose_video).pack(side=LEFT)
-        ttk.Button(file_row, text="Add to queue", command=self.add_to_queue).pack(side=LEFT, padx=(8, 0))
-        ttk.Button(file_row, text="Clear queue", command=self.clear_queue).pack(side=LEFT, padx=(8, 0))
-        self.file_label = ttk.Label(file_row, text="No video selected")
-        self.file_label.pack(side=LEFT, padx=12)
+        self.main_pane = tk.PanedWindow(
+            shell,
+            orient=tk.HORIZONTAL,
+            sashwidth=4,
+            sashrelief=tk.FLAT,
+            bg=AppTheme.BORDER,
+            bd=0,
+        )
+        self.main_pane.pack(fill=BOTH, expand=True)
 
-        queue_row = ttk.Frame(controls)
-        queue_row.pack(fill="x", pady=(0, 10))
-        ttk.Label(queue_row, text="Batch queue:").pack(side=LEFT)
-        self.queue_listbox = ttk.Treeview(queue_row, columns=("video",), show="headings", height=3)
+        self.left_panel = ttk.Frame(self.main_pane, style="Surface.TFrame", padding=12)
+        self.main_pane.add(self.left_panel, minsize=640)
+
+        self._build_workflow_panel(self.left_panel)
+
+        self.copilot_panel = ttk.Frame(self.main_pane, style="Copilot.TFrame", width=360)
+        self.main_pane.add(self.copilot_panel, minsize=320)
+        self._build_copilot_panel(self.copilot_panel)
+
+    def _build_workflow_panel(self, parent: ttk.Frame) -> None:
+        hero = ttk.Frame(parent, style="Elevated.TFrame", padding=14)
+        hero.pack(fill="x", pady=(0, 10))
+
+        file_row = ttk.Frame(hero, style="Elevated.TFrame")
+        file_row.pack(fill="x")
+        ttk.Button(file_row, text="Choose video", command=self.choose_video).pack(side=LEFT)
+        ttk.Button(file_row, text="Add to queue", style="Ghost.TButton", command=self.add_to_queue).pack(
+            side=LEFT, padx=(8, 0)
+        )
+        ttk.Button(file_row, text="Clear queue", style="Ghost.TButton", command=self.clear_queue).pack(
+            side=LEFT, padx=(8, 0)
+        )
+        self.file_label = ttk.Label(file_row, text="No video selected", style="CardMuted.TLabel")
+        self.file_label.pack(side=LEFT, padx=(14, 0))
+
+        queue_row = ttk.Frame(hero, style="Elevated.TFrame")
+        queue_row.pack(fill="x", pady=(10, 0))
+        ttk.Label(queue_row, text="Batch queue", style="CardMuted.TLabel").pack(anchor=W)
+        self.queue_listbox = ttk.Treeview(queue_row, columns=("video",), show="headings", height=2)
         self.queue_listbox.heading("video", text="Queued videos")
-        self.queue_listbox.column("video", width=760, stretch=True)
-        self.queue_listbox.pack(side=LEFT, fill="x", expand=True, padx=(8, 0))
+        self.queue_listbox.column("video", width=520, stretch=True)
+        self.queue_listbox.pack(fill="x", pady=(4, 0))
 
-        settings_row = ttk.Frame(controls)
-        settings_row.pack(fill="x")
-        self._add_combobox(settings_row, "Vision mode", self.provider_var, ["heuristic", "auto", "openai", "anthropic"])
-        self._add_spinbox(settings_row, "Sample clips", self.max_clips_var, 1, 10)
-        self._add_spinbox(settings_row, "Minimum score", self.min_score_var, 0, 100)
-        self._add_spinbox(settings_row, "Analyze every N seconds", self.interval_var, 1, 10)
-        self._add_spinbox(settings_row, "Max AI frames", self.max_frames_var, 1, 40)
-        self._add_combobox(
-            settings_row,
-            "Platform preset",
-            self.platform_var,
-            ["generic", "tiktok", "youtube_shorts", "instagram_reels"],
-        )
-        self._add_combobox(settings_row, "Visual theme", self.theme_var, ["default", "hormozi", "minimal", "gen_z"])
-        self._add_combobox(
-            settings_row,
-            "Game profile",
-            self.game_profile_var,
-            ["generic", "valorant", "cod", "fortnite"],
-        )
-        self._add_combobox(settings_row, "Smart reframe", self.smart_reframe_var, ["off", "on"])
+        settings = ttk.Frame(parent, style="Surface.TFrame", padding=(0, 4))
+        settings.pack(fill="x", pady=(0, 10))
+        row_a = ttk.Frame(settings, style="Surface.TFrame")
+        row_a.pack(fill="x")
+        row_b = ttk.Frame(settings, style="Surface.TFrame")
+        row_b.pack(fill="x", pady=(8, 0))
+        self._add_combobox(row_a, "Vision", self.provider_var, ["heuristic", "auto", "openai", "anthropic"])
+        self._add_spinbox(row_a, "Max clips", self.max_clips_var, 1, 10)
+        self._add_spinbox(row_a, "Min score", self.min_score_var, 0, 100)
+        self._add_combobox(row_a, "Platform", self.platform_var, ["generic", "tiktok", "youtube_shorts", "instagram_reels"])
+        self._add_combobox(row_b, "Theme", self.theme_var, ["default", "hormozi", "minimal", "gen_z"])
+        self._add_combobox(row_b, "Game", self.game_profile_var, ["generic", "valorant", "cod", "fortnite"])
+        self._add_combobox(row_b, "Reframe", self.smart_reframe_var, ["off", "on"])
+        self._add_spinbox(row_b, "Interval (s)", self.interval_var, 1, 10)
+        self._add_spinbox(row_b, "AI frames", self.max_frames_var, 1, 40)
 
-        action_row = ttk.Frame(outer)
-        action_row.pack(fill="x", pady=(0, 12))
-        self.generate_button = ttk.Button(action_row, text="Generate clips", command=self.generate_clips)
+        action_row = ttk.Frame(parent, style="Surface.TFrame")
+        action_row.pack(fill="x", pady=(0, 10))
+        self.generate_button = ttk.Button(
+            action_row,
+            text="Generate clips",
+            style="Accent.TButton",
+            command=self.generate_clips,
+        )
         self.generate_button.pack(side=LEFT)
-        ttk.Button(action_row, text="Open final clips folder", command=lambda: open_path(PROJECT_ROOT / "final_clips")).pack(
-            side=LEFT,
-            padx=8,
+        ttk.Button(
+            action_row,
+            text="Open output",
+            style="Ghost.TButton",
+            command=lambda: open_path(PROJECT_ROOT / "final_clips"),
+        ).pack(side=LEFT, padx=(8, 0))
+        ttk.Button(action_row, text="Export all", style="Ghost.TButton", command=self.export_all_clips).pack(
+            side=LEFT, padx=(8, 0)
         )
-        ttk.Button(action_row, text="Export all clips...", command=self.export_all_clips).pack(side=LEFT, padx=(0, 8))
-        ttk.Button(action_row, text="Copy all captions", command=self.copy_all_captions).pack(side=LEFT)
-        ttk.Label(action_row, textvariable=self.status_var).pack(side=LEFT, padx=12)
+        ttk.Button(action_row, text="Copy captions", style="Ghost.TButton", command=self.copy_all_captions).pack(
+            side=LEFT, padx=(8, 0)
+        )
 
-        api_frame = ttk.LabelFrame(outer, text="Optional: AI vision key", padding=10)
-        api_frame.pack(fill="x", pady=(0, 12))
-        ttk.Label(api_frame, textvariable=self.key_status_var).pack(anchor=W)
-        api_row = ttk.Frame(api_frame)
-        api_row.pack(fill="x", pady=(6, 0))
-        ttk.Label(api_row, text="OpenAI API key").pack(side=LEFT)
-        ttk.Entry(api_row, textvariable=self.openai_key_var, show="*", width=58).pack(side=LEFT, padx=8)
-        ttk.Button(api_row, text="Save key", command=self.save_openai_key).pack(side=LEFT)
-
-        ocr_frame = ttk.LabelFrame(outer, text="Optional: Killfeed OCR (Tesseract)", padding=10)
-        ocr_frame.pack(fill="x", pady=(0, 12))
-        ttk.Label(ocr_frame, textvariable=self.ocr_status_var, wraplength=960).pack(anchor=W)
-        ttk.Label(
-            ocr_frame,
-            text="Install Tesseract for killfeed detection: https://github.com/UB-Mannheim/tesseract/wiki",
-            wraplength=960,
-        ).pack(anchor=W, pady=(4, 0))
-
-        self.social_frame = ttk.LabelFrame(outer, text="Optional: Direct platform posting (OAuth)", padding=10)
-        self.social_frame.pack(fill="x", pady=(0, 12))
-        ttk.Label(
-            self.social_frame,
-            text=(
-                "Connect YouTube, TikTok, or Instagram to post clips directly. "
-                "Tokens are stored in your OS keychain — never in config or logs. "
-                "You must confirm each post. Enable social_publish.enabled and "
-                "rollout.optional_features.direct_publish in config.json to activate."
-            ),
-            wraplength=960,
-        ).pack(anchor=W)
-        for platform, label in (
-            ("youtube", "YouTube Shorts"),
-            ("tiktok", "TikTok"),
-            ("instagram", "Instagram Reels"),
-        ):
-            row = ttk.Frame(self.social_frame)
-            row.pack(fill="x", pady=(6, 0))
-            ttk.Label(row, text=label, width=18).pack(side=LEFT)
-            ttk.Label(row, textvariable=self.social_status_vars[platform], wraplength=520).pack(
-                side=LEFT,
-                padx=(0, 12),
-            )
-            ttk.Button(row, text="Connect", command=lambda p=platform: self.connect_platform(p)).pack(side=LEFT)
-            ttk.Button(row, text="Disconnect", command=lambda p=platform: self.disconnect_platform(p)).pack(
-                side=LEFT,
-                padx=(8, 0),
-            )
-
-        self.agent_frame = ttk.LabelFrame(outer, text="Optional: AI Assistant (advisor)", padding=10)
-        self.agent_frame.pack(fill="x", pady=(0, 12))
-        ttk.Label(
-            self.agent_frame,
-            text=(
-                "Ask questions about your clips, setup, settings, and posting strategy. "
-                "The assistant uses local run data only — secrets are never sent. "
-                "Mutating actions require your approval. Enable embedded_agent.enabled and "
-                "rollout.optional_features.embedded_agent in config.json."
-            ),
-            wraplength=960,
-        ).pack(anchor=W)
-        ttk.Label(self.agent_frame, textvariable=self.agent_status_var, wraplength=960).pack(anchor=W, pady=(4, 0))
-
-        quick_row = ttk.Frame(self.agent_frame)
-        quick_row.pack(fill="x", pady=(6, 0))
-        ttk.Label(quick_row, text="Quick:").pack(side=LEFT)
-        for label, key in (
-            ("Explain clips", "explain_clips"),
-            ("Help setup", "help_setup"),
-            ("Suggest settings", "suggest_settings"),
-            ("Posting tips", "posting_strategy"),
-        ):
-            ttk.Button(quick_row, text=label, command=lambda k=key: self.agent_quick_prompt(k)).pack(
-                side=LEFT,
-                padx=(8, 0),
-            )
-
-        self.agent_chat = Text(self.agent_frame, height=6, wrap="word", state="disabled")
-        self.agent_chat.pack(fill="x", pady=(8, 0))
-
-        input_row = ttk.Frame(self.agent_frame)
-        input_row.pack(fill="x", pady=(6, 0))
-        self.agent_entry = ttk.Entry(input_row, textvariable=self.agent_input_var, width=80)
-        self.agent_entry.pack(side=LEFT, fill="x", expand=True)
-        self.agent_entry.bind("<Return>", lambda _event: self.agent_send_message())
-        ttk.Button(input_row, text="Send", command=self.agent_send_message).pack(side=LEFT, padx=(8, 0))
-        ttk.Button(input_row, text="Clear chat", command=self.agent_clear_chat).pack(side=LEFT, padx=(8, 0))
-
-        progress = ttk.LabelFrame(outer, text="2. Progress", padding=10)
-        progress.pack(fill="x", pady=(0, 12))
+        progress = ttk.LabelFrame(parent, text="Progress", padding=10)
+        progress.pack(fill="x", pady=(0, 10))
         self.progress_bar = ttk.Progressbar(progress, variable=self.progress_var, maximum=100)
         self.progress_bar.pack(fill="x", pady=(0, 6))
-        ttk.Label(progress, textvariable=self.stage_var).pack(anchor=W, pady=(0, 6))
-        self.progress_text = Text(progress, height=8, wrap="word")
+        ttk.Label(progress, textvariable=self.stage_var, style="Muted.TLabel").pack(anchor=W, pady=(0, 6))
+        self.progress_text = Text(progress, height=5, wrap="word")
+        AppTheme.configure_text_widget(self.progress_text, mono=True)
         self.progress_text.pack(fill="x")
 
-        results_outer = ttk.LabelFrame(outer, text="3. Review generated clips", padding=10)
-        results_outer.pack(fill=BOTH, expand=True)
-        self.results_canvas_widget = Canvas(results_outer, highlightthickness=0)
+        results_outer = ttk.LabelFrame(parent, text="Clips", padding=10)
+        results_outer.pack(fill=BOTH, expand=True, pady=(0, 10))
+        self.results_canvas_widget = Canvas(
+            results_outer,
+            highlightthickness=0,
+            bg=AppTheme.SURFACE,
+            bd=0,
+        )
         self.results_scrollbar = ttk.Scrollbar(
             results_outer,
             orient="vertical",
             command=self.results_canvas_widget.yview,
         )
-        self.results_canvas = ttk.Frame(self.results_canvas_widget)
+        self.results_canvas = ttk.Frame(self.results_canvas_widget, style="Surface.TFrame")
         self.results_canvas.bind(
             "<Configure>",
-            lambda _event: self.results_canvas_widget.configure(
-                scrollregion=self.results_canvas_widget.bbox("all")
-            ),
+            lambda _event: self.results_canvas_widget.configure(scrollregion=self.results_canvas_widget.bbox("all")),
         )
-        self.results_window = self.results_canvas_widget.create_window(
-            (0, 0),
-            window=self.results_canvas,
-            anchor="nw",
-        )
+        self.results_window = self.results_canvas_widget.create_window((0, 0), window=self.results_canvas, anchor="nw")
         self.results_canvas_widget.configure(yscrollcommand=self.results_scrollbar.set)
         self.results_canvas_widget.bind(
             "<Configure>",
             lambda event: self.results_canvas_widget.itemconfigure(self.results_window, width=event.width),
         )
         self.results_canvas_widget.pack(side=LEFT, fill=BOTH, expand=True)
-        self.results_scrollbar.pack(side="right", fill="y")
+        self.results_scrollbar.pack(side=RIGHT, fill="y")
         self.results_canvas_widget.bind_all("<MouseWheel>", self._on_mousewheel)
-
         self.results_placeholder = ttk.Label(
             self.results_canvas,
-            text="Generated clips will appear here with score, caption, and open/export buttons.",
+            text="Your generated clips will appear here.",
+            style="Muted.TLabel",
         )
-        self.results_placeholder.pack(anchor=W)
+        self.results_placeholder.pack(anchor=W, padx=4, pady=8)
+
+        integrations = ttk.Notebook(parent)
+        integrations.pack(fill="x")
+        self._build_integrations_tabs(integrations)
+
+    def _build_integrations_tabs(self, notebook: ttk.Notebook) -> None:
+        social_tab = ttk.Frame(notebook, style="Surface.TFrame", padding=10)
+        notebook.add(social_tab, text="Publish")
+        self.social_frame = social_tab
+        ttk.Label(
+            social_tab,
+            text="Connect platforms to post directly. Tokens stay in your OS keychain.",
+            style="Muted.TLabel",
+            wraplength=560,
+        ).pack(anchor=W)
+        for platform, label in (
+            ("youtube", "YouTube Shorts"),
+            ("tiktok", "TikTok"),
+            ("instagram", "Instagram Reels"),
+        ):
+            row = ttk.Frame(social_tab, style="Surface.TFrame")
+            row.pack(fill="x", pady=(8, 0))
+            ttk.Label(row, text=label, width=16, style="Surface.TLabel").pack(side=LEFT)
+            ttk.Label(row, textvariable=self.social_status_vars[platform], style="Muted.TLabel", wraplength=280).pack(
+                side=LEFT, padx=(0, 8)
+            )
+            ttk.Button(row, text="Connect", style="Ghost.TButton", command=lambda p=platform: self.connect_platform(p)).pack(
+                side=LEFT
+            )
+            ttk.Button(
+                row,
+                text="Disconnect",
+                style="Ghost.TButton",
+                command=lambda p=platform: self.disconnect_platform(p),
+            ).pack(side=LEFT, padx=(6, 0))
+
+        api_tab = ttk.Frame(notebook, style="Surface.TFrame", padding=10)
+        notebook.add(api_tab, text="Vision API")
+        ttk.Label(api_tab, textvariable=self.key_status_var, style="Muted.TLabel", wraplength=560).pack(anchor=W)
+        api_row = ttk.Frame(api_tab, style="Surface.TFrame")
+        api_row.pack(fill="x", pady=(8, 0))
+        ttk.Label(api_row, text="OpenAI key", style="Surface.TLabel").pack(side=LEFT)
+        ttk.Entry(api_row, textvariable=self.openai_key_var, show="*", width=42).pack(side=LEFT, padx=(8, 8))
+        ttk.Button(api_row, text="Save", style="Ghost.TButton", command=self.save_openai_key).pack(side=LEFT)
+
+        ocr_tab = ttk.Frame(notebook, style="Surface.TFrame", padding=10)
+        notebook.add(ocr_tab, text="OCR")
+        ttk.Label(ocr_tab, textvariable=self.ocr_status_var, style="Muted.TLabel", wraplength=560).pack(anchor=W)
+        ttk.Label(
+            ocr_tab,
+            text="Tesseract: https://github.com/UB-Mannheim/tesseract/wiki",
+            style="Muted.TLabel",
+            wraplength=560,
+        ).pack(anchor=W, pady=(6, 0))
+
+    def _build_copilot_panel(self, parent: ttk.Frame) -> None:
+        parent.pack_propagate(False)
+
+        accent_bar = tk.Frame(parent, bg=AppTheme.ACCENT, height=3)
+        accent_bar.pack(fill="x")
+
+        header = ttk.Frame(parent, style="Copilot.TFrame", padding=(14, 12))
+        header.pack(fill="x")
+        ttk.Label(header, text="AI Copilot", style="Copilot.TLabel", font=AppTheme.FONT_UI_BOLD).pack(anchor=W)
+        ttk.Label(
+            header,
+            text="Clip insights · setup · settings · posting",
+            style="CopilotMuted.TLabel",
+        ).pack(anchor=W, pady=(2, 0))
+        ttk.Label(header, textvariable=self.agent_status_var, style="CopilotMuted.TLabel", wraplength=300).pack(
+            anchor=W, pady=(6, 0)
+        )
+
+        chips = ttk.Frame(parent, style="Copilot.TFrame", padding=(12, 0))
+        chips.pack(fill="x")
+        for label, key in (
+            ("Explain", "explain_clips"),
+            ("Setup", "help_setup"),
+            ("Settings", "suggest_settings"),
+            ("Post tips", "posting_strategy"),
+        ):
+            ttk.Button(chips, text=label, style="Chip.TButton", command=lambda k=key: self.agent_quick_prompt(k)).pack(
+                side=LEFT, padx=(0, 6), pady=(0, 8)
+            )
+
+        chat_wrap = ttk.Frame(parent, style="Copilot.TFrame", padding=(12, 0))
+        chat_wrap.pack(fill=BOTH, expand=True)
+        self.agent_chat = Text(chat_wrap, wrap="word", state="disabled")
+        AppTheme.configure_copilot_chat(self.agent_chat)
+        self.agent_chat.pack(fill=BOTH, expand=True)
+        self._append_agent_system_welcome()
+
+        composer = ttk.Frame(parent, style="Copilot.TFrame", padding=12)
+        composer.pack(fill="x")
+        input_shell = ttk.Frame(composer, style="Copilot.TFrame")
+        input_shell.pack(fill="x")
+        self.agent_entry = ttk.Entry(input_shell, textvariable=self.agent_input_var, style="Copilot.TEntry")
+        self.agent_entry.pack(side=LEFT, fill="x", expand=True)
+        self.agent_entry.bind("<Return>", lambda _event: self.agent_send_message())
+        ttk.Button(composer, text="Send", style="Accent.TButton", command=self.agent_send_message).pack(
+            fill="x", pady=(8, 0)
+        )
+        ttk.Button(composer, text="Clear conversation", style="Ghost.TButton", command=self.agent_clear_chat).pack(
+            fill="x", pady=(6, 0)
+        )
+
+    def toggle_copilot_panel(self) -> None:
+        if self.copilot_visible:
+            self.main_pane.forget(self.copilot_panel)
+            self.copilot_visible = False
+            self.copilot_toggle_btn.configure(text="Show Copilot")
+        else:
+            self.main_pane.add(self.copilot_panel, minsize=320)
+            self.copilot_visible = True
+            self.copilot_toggle_btn.configure(text="Hide Copilot")
+
+    def _append_agent_system_welcome(self) -> None:
+        self.agent_chat.configure(state="normal")
+        self.agent_chat.insert(
+            END,
+            "Ask me about your clips, setup, or posting strategy.\n",
+            "system",
+        )
+        self.agent_chat.configure(state="disabled")
 
     def _add_combobox(self, parent: ttk.Frame, label: str, variable: StringVar, values: list[str]) -> None:
-        frame = ttk.Frame(parent)
-        frame.pack(side=LEFT, padx=(0, 18))
-        ttk.Label(frame, text=label).pack(anchor=W)
-        ttk.Combobox(frame, textvariable=variable, values=values, width=14, state="readonly").pack(anchor=W)
+        frame = ttk.Frame(parent, style="Surface.TFrame")
+        frame.pack(side=LEFT, padx=(0, 14))
+        ttk.Label(frame, text=label, style="Muted.TLabel").pack(anchor=W)
+        ttk.Combobox(frame, textvariable=variable, values=values, width=12, state="readonly").pack(anchor=W)
 
     def _add_spinbox(self, parent: ttk.Frame, label: str, variable: StringVar, from_: int, to: int) -> None:
-        frame = ttk.Frame(parent)
-        frame.pack(side=LEFT, padx=(0, 18))
-        ttk.Label(frame, text=label).pack(anchor=W)
-        ttk.Spinbox(frame, from_=from_, to=to, textvariable=variable, width=8).pack(anchor=W)
+        frame = ttk.Frame(parent, style="Surface.TFrame")
+        frame.pack(side=LEFT, padx=(0, 14))
+        ttk.Label(frame, text=label, style="Muted.TLabel").pack(anchor=W)
+        ttk.Spinbox(frame, from_=from_, to=to, textvariable=variable, width=7).pack(anchor=W)
 
     def choose_video(self) -> None:
         path = filedialog.askopenfilename(
@@ -631,54 +714,76 @@ class GameplayAutoEditorApp:
 
             card = ttk.LabelFrame(
                 self.results_canvas,
-                text=f"Clip {index} - score {clip.get('score', 0)}/100 ({clip.get('quality_tier', quality_tier(clip))})",
-                padding=10,
+                text=f"Clip {index}  ·  {clip.get('score', 0)}/100  ·  {clip.get('quality_tier', quality_tier(clip))}",
+                padding=12,
+                style="Card.TLabelframe",
             )
-            card.pack(fill="x", pady=(0, 10))
+            card.pack(fill="x", pady=(0, 10), padx=2)
 
             badges = summarize_enhancements(clip)
             if badges:
-                ttk.Label(card, text=f"Applied: {', '.join(badges)}", wraplength=900).pack(anchor=W, pady=(0, 4))
+                ttk.Label(
+                    card,
+                    text=" · ".join(badges),
+                    style="CardMuted.TLabel",
+                    wraplength=520,
+                ).pack(anchor=W, pady=(0, 4))
 
             tier = clip.get("quality_tier") or quality_tier(clip)
             if tier == "review_recommended":
                 ttk.Label(
                     card,
-                    text="Review recommended — lower-confidence moment selected by fallback scoring.",
-                    wraplength=900,
+                    text="Review recommended before posting.",
+                    style="CardMuted.TLabel",
+                    wraplength=520,
                 ).pack(anchor=W, pady=(0, 4))
             elif tier == "fallback" or clip.get("selection_mode", "").startswith("fallback") or report.get("used_fallback"):
                 ttk.Label(
                     card,
-                    text="Fallback clip — generated automatically when no strong highlights were found.",
-                    wraplength=900,
+                    text="Fallback clip — auto-generated when no strong highlights were found.",
+                    style="CardMuted.TLabel",
+                    wraplength=520,
                 ).pack(anchor=W, pady=(0, 4))
 
-            ttk.Label(card, text=f"File: {final_clip.name}").pack(anchor=W)
-            ttk.Label(card, text=f"Hook: {clip.get('hook_text', '')}", font=("Arial", 11, "bold")).pack(anchor=W)
-            ttk.Label(card, text=f"Caption: {clip.get('caption_text', '')}", wraplength=900).pack(anchor=W, pady=(4, 0))
-            ttk.Label(card, text=f"Categories: {', '.join(clip.get('categories', [])) or 'none'}").pack(anchor=W)
-            if clip.get("start") or clip.get("end"):
-                ttk.Label(card, text=f"Moment: {clip.get('start')}s to {clip.get('end')}s").pack(anchor=W)
-
-            buttons = ttk.Frame(card)
-            buttons.pack(fill="x", pady=(8, 0))
-            ttk.Button(buttons, text="Play clip", command=lambda p=final_clip: open_path(p)).pack(side=LEFT)
-            ttk.Button(buttons, text="Open folder", command=lambda p=final_clip: open_path(p.parent)).pack(
-                side=LEFT,
-                padx=8,
+            ttk.Label(card, text=final_clip.name, style="CardMuted.TLabel").pack(anchor=W)
+            ttk.Label(card, text=clip.get("hook_text", ""), style="CardTitle.TLabel").pack(anchor=W, pady=(4, 0))
+            ttk.Label(card, text=clip.get("caption_text", ""), style="CardMuted.TLabel", wraplength=520).pack(
+                anchor=W, pady=(4, 0)
             )
-            ttk.Button(buttons, text="Export copy...", command=lambda p=final_clip: export_clip(p)).pack(side=LEFT)
-            ttk.Button(buttons, text="Copy caption", command=lambda c=clip: self.copy_caption(c)).pack(side=LEFT, padx=8)
+            ttk.Label(
+                card,
+                text=f"Categories: {', '.join(clip.get('categories', [])) or 'none'}",
+                style="CardMuted.TLabel",
+            ).pack(anchor=W)
+            if clip.get("start") or clip.get("end"):
+                ttk.Label(
+                    card,
+                    text=f"{clip.get('start')}s → {clip.get('end')}s",
+                    style="CardMuted.TLabel",
+                ).pack(anchor=W)
+
+            buttons = ttk.Frame(card, style="Elevated.TFrame")
+            buttons.pack(fill="x", pady=(10, 0))
+            ttk.Button(buttons, text="Play", command=lambda p=final_clip: open_path(p)).pack(side=LEFT)
+            ttk.Button(buttons, text="Folder", style="Ghost.TButton", command=lambda p=final_clip: open_path(p.parent)).pack(
+                side=LEFT, padx=(6, 0)
+            )
+            ttk.Button(buttons, text="Export", style="Ghost.TButton", command=lambda p=final_clip: export_clip(p)).pack(
+                side=LEFT, padx=(6, 0)
+            )
+            ttk.Button(buttons, text="Caption", style="Ghost.TButton", command=lambda c=clip: self.copy_caption(c)).pack(
+                side=LEFT, padx=(6, 0)
+            )
             ttk.Button(
                 buttons,
-                text="Copy social post",
+                text="Social",
+                style="Ghost.TButton",
                 command=lambda c=clip: self.copy_social_caption(c),
-            ).pack(side=LEFT)
+            ).pack(side=LEFT, padx=(6, 0))
             if self.social_manager.is_enabled():
-                post_row = ttk.Frame(card)
-                post_row.pack(fill="x", pady=(6, 0))
-                ttk.Label(post_row, text="Post to:").pack(side=LEFT)
+                post_row = ttk.Frame(card, style="Elevated.TFrame")
+                post_row.pack(fill="x", pady=(8, 0))
+                ttk.Label(post_row, text="Post", style="CardMuted.TLabel").pack(side=LEFT)
                 for platform, label in (
                     ("youtube", "YouTube"),
                     ("tiktok", "TikTok"),
@@ -687,14 +792,16 @@ class GameplayAutoEditorApp:
                     ttk.Button(
                         post_row,
                         text=label,
+                        style="Chip.TButton",
                         command=lambda p=platform, c=clip, path=final_clip: self.post_clip(p, c, path),
-                    ).pack(side=LEFT, padx=(8, 0))
+                    ).pack(side=LEFT, padx=(6, 0))
             if clip.get("source_frame") and Path(str(clip.get("source_frame"))).exists():
                 ttk.Button(
                     buttons,
-                    text="Preview frame",
+                    text="Frame",
+                    style="Ghost.TButton",
                     command=lambda c=clip: self.preview_frame(c),
-                ).pack(side=LEFT, padx=8)
+                ).pack(side=LEFT, padx=(6, 0))
 
         self._refresh_results_canvas()
 
@@ -881,8 +988,12 @@ class GameplayAutoEditorApp:
 
     def _append_agent_message(self, role: str, content: str) -> None:
         self.agent_chat.configure(state="normal")
-        prefix = "You: " if role == "user" else "Assistant: "
-        self.agent_chat.insert(END, f"{prefix}{content}\n\n")
+        if role == "user":
+            self.agent_chat.insert(END, "You\n", "user_label")
+            self.agent_chat.insert(END, f"{content}\n", "user_body")
+        else:
+            self.agent_chat.insert(END, "Copilot\n", "agent_label")
+            self.agent_chat.insert(END, f"{content}\n", "agent_body")
         self.agent_chat.configure(state="disabled")
         self.agent_chat.see(END)
 
@@ -890,6 +1001,7 @@ class GameplayAutoEditorApp:
         self.agent_advisor.clear_conversation()
         self.agent_chat.configure(state="normal")
         self.agent_chat.delete("1.0", END)
+        self._append_agent_system_welcome()
         self.agent_chat.configure(state="disabled")
         self.status_var.set("Assistant chat cleared.")
 
@@ -1042,9 +1154,9 @@ class GameplayAutoEditorApp:
         if show_placeholder:
             ttk.Label(
                 self.results_canvas,
-                text="Generated clips will appear here with score, caption, and open/export buttons.",
-                wraplength=900,
-            ).pack(anchor=W)
+                text="Your generated clips will appear here.",
+                style="Muted.TLabel",
+            ).pack(anchor=W, padx=4, pady=8)
         self._refresh_results_canvas()
 
     def _append_progress(self, text: str) -> None:
@@ -1176,10 +1288,6 @@ def _add_packaged_bin_to_path() -> None:
 def main() -> int:
     _add_packaged_bin_to_path()
     root = Tk()
-    try:
-        ttk.Style().theme_use("clam")
-    except Exception:  # noqa: BLE001
-        pass
     GameplayAutoEditorApp(root)
     root.mainloop()
     return 0
