@@ -38,6 +38,74 @@ def create_input(
     return ttk.Entry(parent, **kwargs)
 
 
+class ScrollablePanel(tk.Frame):
+    """Vertical scroll container for workflow sections that exceed the viewport."""
+
+    def __init__(self, master: tk.Misc):
+        super().__init__(master, bg=DS.color.background)
+        self.columnconfigure(0, weight=1)
+        self.rowconfigure(0, weight=1)
+
+        self.canvas = tk.Canvas(
+            self,
+            highlightthickness=0,
+            bd=0,
+            bg=DS.color.surface,
+        )
+        self.scrollbar = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
+        self.body = ttk.Frame(self.canvas, style="Surface.TFrame", padding=(0, 0, DS.space.xs, 0))
+        self.body.bind("<Configure>", self._on_body_configure)
+        self._body_window = self.canvas.create_window((0, 0), window=self.body, anchor="nw")
+        self.canvas.configure(yscrollcommand=self.scrollbar.set)
+        self.canvas.bind("<Configure>", self._on_canvas_configure)
+        self.canvas.grid(row=0, column=0, sticky="nsew")
+        self.scrollbar.grid(row=0, column=1, sticky="ns")
+        self._wheel_bound = False
+        self.canvas.bind("<Enter>", self._bind_mousewheel)
+        self.canvas.bind("<Leave>", self._unbind_mousewheel)
+
+    def _on_body_configure(self, _event: tk.Event | None = None) -> None:
+        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+
+    def _on_canvas_configure(self, event: tk.Event) -> None:
+        self.canvas.itemconfigure(self._body_window, width=event.width)
+
+    def _bind_mousewheel(self, _event: tk.Event | None = None) -> None:
+        if self._wheel_bound:
+            return
+        self.canvas.bind_all("<MouseWheel>", self._on_mousewheel)
+        self.canvas.bind_all("<Button-4>", self._on_mousewheel_linux)
+        self.canvas.bind_all("<Button-5>", self._on_mousewheel_linux)
+        self._wheel_bound = True
+
+    def _unbind_mousewheel(self, _event: tk.Event | None = None) -> None:
+        if not self._wheel_bound:
+            return
+        self.canvas.unbind_all("<MouseWheel>")
+        self.canvas.unbind_all("<Button-4>")
+        self.canvas.unbind_all("<Button-5>")
+        self._wheel_bound = False
+
+    def _on_mousewheel(self, event: tk.Event) -> None:
+        self.canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+    def _on_mousewheel_linux(self, event: tk.Event) -> None:
+        direction = -1 if event.num == 4 else 1
+        self.canvas.yview_scroll(direction, "units")
+
+    def refresh(self) -> None:
+        self.body.update_idletasks()
+        self._on_body_configure()
+
+    def scroll_to_widget(self, widget: tk.Misc) -> None:
+        self.body.update_idletasks()
+        self.refresh()
+        widget_y = widget.winfo_rooty() - self.body.winfo_rooty()
+        total = max(self.body.winfo_height(), 1)
+        fraction = max(0.0, min(1.0, widget_y / total))
+        self.canvas.yview_moveto(fraction)
+
+
 class SectionCard(tk.Frame):
     """Card container with optional title, padding, and simulated shadow."""
 
@@ -150,20 +218,21 @@ class SectionCard(tk.Frame):
 class ClipsPanel(tk.Frame):
     """Fixed-height scrollable region for clip cards."""
 
-    def __init__(self, master: tk.Misc, *, title: str, min_height: int = 320):
+    def __init__(self, master: tk.Misc, *, title: str, min_height: int = 220):
         super().__init__(master, bg=DS.color.background)
         self.card = SectionCard(self, title=title, min_height=min_height, padding=DS.space.md)
-        self.card.pack(fill=BOTH, expand=True)
+        self.card.pack(fill="x")
 
         scroll_wrap = ttk.Frame(self.card.content, style="CardSurface.TFrame")
         scroll_wrap.pack(fill="x")
 
+        inner_height = max(min_height - 72, 120)
         self.canvas = tk.Canvas(
             scroll_wrap,
             highlightthickness=0,
             bd=0,
             bg=DS.color.surface,
-            height=min_height - 56,
+            height=inner_height,
         )
         self.scrollbar = ttk.Scrollbar(scroll_wrap, orient="vertical", command=self.canvas.yview)
         self.body = ttk.Frame(self.canvas, style="CardSurface.TFrame")
@@ -171,14 +240,32 @@ class ClipsPanel(tk.Frame):
         self._body_window = self.canvas.create_window((0, 0), window=self.body, anchor="nw")
         self.canvas.configure(yscrollcommand=self.scrollbar.set)
         self.canvas.bind("<Configure>", self._resize_body)
-        self.canvas.pack(side=LEFT, fill=BOTH, expand=True)
+        self.canvas.pack(side=LEFT, fill="x", expand=True)
         self.scrollbar.pack(side=RIGHT, fill=Y)
+        self._wheel_bound = False
 
     def _resize_body(self, event: tk.Event) -> None:
         self.canvas.itemconfigure(self._body_window, width=event.width)
 
     def bind_mousewheel(self, callback: Callable) -> None:
-        self.canvas.bind_all("<MouseWheel>", callback)
+        def _bind(_event: tk.Event | None = None) -> None:
+            if self._wheel_bound:
+                return
+            self.canvas.bind_all("<MouseWheel>", callback)
+            self.canvas.bind_all("<Button-4>", lambda e: callback(e))
+            self.canvas.bind_all("<Button-5>", lambda e: callback(e))
+            self._wheel_bound = True
+
+        def _unbind(_event: tk.Event | None = None) -> None:
+            if not self._wheel_bound:
+                return
+            self.canvas.unbind_all("<MouseWheel>")
+            self.canvas.unbind_all("<Button-4>")
+            self.canvas.unbind_all("<Button-5>")
+            self._wheel_bound = False
+
+        self.canvas.bind("<Enter>", _bind)
+        self.canvas.bind("<Leave>", _unbind)
 
     def refresh(self) -> None:
         self.body.update_idletasks()

@@ -37,6 +37,8 @@ LOADING_CLIPS = "Finding your best moments and building share-ready clips…"
 SECTION_ADVANCED = "Advanced options"
 BTN_SHOW_ADVANCED = "Show advanced options"
 BTN_HIDE_ADVANCED = "Hide advanced options"
+BTN_SHOW_INTEGRATIONS = "Show integrations"
+BTN_HIDE_INTEGRATIONS = "Hide integrations"
 
 # Settings labels (plain language)
 LBL_DETECTION = "Highlight finder"

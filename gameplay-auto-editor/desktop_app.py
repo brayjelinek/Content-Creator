@@ -29,6 +29,7 @@ from scripts.ui_components import (
     EmptyState,
     FormField,
     ModernInput,
+    ScrollablePanel,
     SectionCard,
     ShimmerPlaceholder,
     SmoothProgressAnimator,
@@ -62,6 +63,7 @@ class GameplayAutoEditorApp:
         self.theme = AppTheme.apply(self.root)
         self.copilot_visible = True
         self.advanced_visible = False
+        self.integrations_visible = False
         self.workflow_step = 1
         self._log_rate_limiter = LogRateLimiter(interval_seconds=1.5)
         self._shimmer: ShimmerPlaceholder | None = None
@@ -122,6 +124,8 @@ class GameplayAutoEditorApp:
 
         walk(self.root)
         self.root.update_idletasks()
+        if hasattr(self, "workflow_scroll"):
+            self.workflow_scroll.refresh()
 
     def _build_ui(self) -> None:
         shell = ttk.Frame(self.root, padding=(AppTheme.SPACING_LG, AppTheme.SPACING_MD))
@@ -172,19 +176,24 @@ class GameplayAutoEditorApp:
 
     def _build_workflow_panel(self, parent: ttk.Frame) -> None:
         parent.columnconfigure(0, weight=1)
-        parent.columnconfigure(1, weight=1)
-        parent.rowconfigure(4, weight=1)
+        parent.rowconfigure(0, weight=1)
+        parent.rowconfigure(1, weight=0)
 
-        steps_card = SectionCard(parent, padding=AppTheme.SPACING_MD, shadow="subtle")
+        self.workflow_scroll = ScrollablePanel(parent)
+        self.workflow_scroll.grid(row=0, column=0, sticky="nsew")
+        workflow = self.workflow_scroll.body
+        workflow.columnconfigure(0, weight=1)
+        workflow.columnconfigure(1, weight=1)
+
+        steps_card = SectionCard(workflow, padding=AppTheme.SPACING_MD, shadow="subtle")
         steps_card.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, AppTheme.SPACING_MD))
         self.step_strip = StepStrip(steps_card.content, [copy.STEP_PICK, copy.STEP_CREATE, copy.STEP_REVIEW])
         self.step_strip.pack(fill="x")
         self.step_labels = self.step_strip.labels
 
         hero_card = SectionCard(
-            parent,
+            workflow,
             title=copy.HERO_HEADLINE,
-            subtitle=copy.HERO_SUBLINE,
             padding=AppTheme.SPACING_LG,
         )
         hero_card.grid(row=1, column=0, sticky="nsew", padx=(0, AppTheme.SPACING_SM), pady=(0, AppTheme.SPACING_MD))
@@ -218,7 +227,7 @@ class GameplayAutoEditorApp:
         self.queue_listbox.column("video", width=420, stretch=True)
         self.queue_listbox.pack(fill="x", pady=(AppTheme.SPACING_XS, 0))
 
-        settings_card = SectionCard(parent, title=copy.SECTION_CLIP_SETTINGS, padding=AppTheme.SPACING_LG)
+        settings_card = SectionCard(workflow, title=copy.SECTION_CLIP_SETTINGS, padding=AppTheme.SPACING_LG)
         settings_card.grid(row=1, column=1, sticky="nsew", padx=(AppTheme.SPACING_SM, 0), pady=(0, AppTheme.SPACING_MD))
 
         settings_header = ttk.Frame(settings_card.content, style="CardSurface.TFrame")
@@ -247,7 +256,7 @@ class GameplayAutoEditorApp:
         self._add_spinbox_grid(self.advanced_settings, 1, 1, copy.LBL_SCAN_EVERY, self.interval_var, 1, 10)
         self._add_spinbox_grid(self.advanced_settings, 2, 0, copy.LBL_AI_FRAMES, self.max_frames_var, 1, 40)
 
-        actions_card = SectionCard(parent, padding=AppTheme.SPACING_MD, shadow="subtle")
+        actions_card = SectionCard(workflow, padding=AppTheme.SPACING_MD, shadow="subtle")
         actions_card.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(0, AppTheme.SPACING_MD))
         action_row = ttk.Frame(actions_card.content, style="CardSurface.TFrame")
         action_row.pack(fill="x")
@@ -272,29 +281,40 @@ class GameplayAutoEditorApp:
         create_button(action_row, copy.BTN_COPY_CAPTIONS, style="Ghost.TButton", command=self.copy_all_captions).pack(
             side=LEFT, padx=(AppTheme.SPACING_SM, 0)
         )
+        self.integrations_toggle_btn = create_button(
+            action_row,
+            copy.BTN_SHOW_INTEGRATIONS,
+            style="Ghost.TButton",
+            command=self.toggle_integrations,
+        )
+        self.integrations_toggle_btn.pack(side=RIGHT)
 
-        progress_card = SectionCard(parent, title=copy.SECTION_CREATING, padding=AppTheme.SPACING_LG)
-        progress_card.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(0, AppTheme.SPACING_MD))
-        self.progress_bar = ttk.Progressbar(progress_card.content, variable=self.progress_var, maximum=100, mode="determinate")
-        self.progress_bar.pack(fill="x", pady=(0, AppTheme.SPACING_SM))
-        ttk.Label(progress_card.content, textvariable=self.stage_var, style="Caption.TLabel").pack(anchor=W, pady=(0, AppTheme.SPACING_SM))
-        self.progress_text = Text(progress_card.content, height=5, wrap="word")
-        AppTheme.configure_text_widget(self.progress_text, mono=True)
-        self.progress_text.pack(fill="x")
-
-        self.clips_panel = ClipsPanel(parent, title=copy.SECTION_YOUR_CLIPS, min_height=320)
-        self.clips_panel.grid(row=4, column=0, columnspan=2, sticky="nsew", pady=(0, AppTheme.SPACING_MD))
-        self.clips_panel.bind_mousewheel(self._on_mousewheel)
+        self.clips_panel = ClipsPanel(workflow, title=copy.SECTION_YOUR_CLIPS, min_height=220)
+        self.clips_panel.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(0, AppTheme.SPACING_MD))
+        self.clips_panel.bind_mousewheel(self._on_clips_mousewheel)
         self.results_canvas = self.clips_panel.body
         self.results_canvas_widget = self.clips_panel.canvas
         self.results_scrollbar = self.clips_panel.scrollbar
         self._show_empty_clips_state()
 
-        integrations_card = SectionCard(parent, title="Integrations", padding=AppTheme.SPACING_MD, shadow="subtle")
-        integrations_card.grid(row=5, column=0, columnspan=2, sticky="ew")
-        integrations = ttk.Notebook(integrations_card.content)
+        self.integrations_card = SectionCard(workflow, title="Integrations", padding=AppTheme.SPACING_MD, shadow="subtle")
+        self.integrations_card.grid(row=4, column=0, columnspan=2, sticky="ew")
+        integrations = ttk.Notebook(self.integrations_card.content)
         integrations.pack(fill="x")
         self._build_integrations_tabs(integrations)
+        self.integrations_card.grid_remove()
+
+        progress_shell = ttk.Frame(parent, style="Surface.TFrame")
+        progress_shell.grid(row=1, column=0, sticky="ew", pady=(AppTheme.SPACING_SM, 0))
+        progress_card = SectionCard(progress_shell, title=copy.SECTION_CREATING, padding=AppTheme.SPACING_MD, shadow="medium")
+        progress_card.pack(fill="x")
+        self.progress_bar = ttk.Progressbar(progress_card.content, variable=self.progress_var, maximum=100, mode="determinate")
+        self.progress_bar.pack(fill="x", pady=(0, AppTheme.SPACING_SM))
+        ttk.Label(progress_card.content, textvariable=self.stage_var, style="Caption.TLabel").pack(anchor=W, pady=(0, AppTheme.SPACING_XS))
+        self.progress_text = Text(progress_card.content, height=3, wrap="word")
+        AppTheme.configure_text_widget(self.progress_text, mono=True)
+        self.progress_text.pack(fill="x")
+        self.progress_card = progress_card
 
     def _build_integrations_tabs(self, notebook: ttk.Notebook) -> None:
         social_tab = ttk.Frame(notebook, style="CardSurface.TFrame", padding=AppTheme.SPACING_MD)
@@ -429,6 +449,18 @@ class GameplayAutoEditorApp:
             self.advanced_settings.columnconfigure(1, weight=1)
             self.advanced_visible = True
             self.advanced_toggle_btn.configure(text=copy.BTN_HIDE_ADVANCED)
+        self._finalize_card_layout()
+
+    def toggle_integrations(self) -> None:
+        if self.integrations_visible:
+            self.integrations_card.grid_remove()
+            self.integrations_visible = False
+            self.integrations_toggle_btn.configure(text=copy.BTN_SHOW_INTEGRATIONS)
+        else:
+            self.integrations_card.grid()
+            self.integrations_visible = True
+            self.integrations_toggle_btn.configure(text=copy.BTN_HIDE_INTEGRATIONS)
+        self._finalize_card_layout()
 
     def _set_workflow_step(self, step: int) -> None:
         self.workflow_step = max(1, min(step, 3))
@@ -1383,8 +1415,13 @@ class GameplayAutoEditorApp:
         self.progress_text.insert(END, line)
         self.progress_text.see(END)
 
-    def _on_mousewheel(self, event) -> None:
-        self.results_canvas_widget.yview_scroll(int(-1 * (event.delta / 120)), "units")
+    def _on_clips_mousewheel(self, event) -> None:
+        if hasattr(event, "delta") and event.delta:
+            self.results_canvas_widget.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        elif getattr(event, "num", None) == 4:
+            self.results_canvas_widget.yview_scroll(-1, "units")
+        elif getattr(event, "num", None) == 5:
+            self.results_canvas_widget.yview_scroll(1, "units")
 
     def _settings_override(self) -> dict:
         return {
