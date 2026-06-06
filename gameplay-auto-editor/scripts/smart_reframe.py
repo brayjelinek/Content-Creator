@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import subprocess
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
@@ -12,6 +11,7 @@ import cv2
 import numpy as np
 
 from scripts.render_settings import merge_render_config
+from scripts.subprocess_utils import run_quiet
 
 logger = logging.getLogger(__name__)
 
@@ -103,7 +103,7 @@ def apply_smart_reframe(input_path: Path, output_path: Path, settings: dict) -> 
     ]
 
     try:
-        result = subprocess.run(command, capture_output=True, text=True, check=False)
+        result = run_quiet(command)
         if result.returncode != 0:
             logger.warning("[SmartReframe] Reframe failed: %s", (result.stderr or "").strip())
             return False

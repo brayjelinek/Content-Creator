@@ -20,9 +20,10 @@ from scripts.clip_metadata import quality_tier, summarize_enhancements
 from scripts.embedded_agent.advisor import EmbeddedAgentAdvisor
 from scripts.pipeline import PROJECT_ROOT, load_config, run_pipeline
 from scripts.social_publish.manager import SocialPublishManager
-from scripts.ui_logging import attach_ui_log_handler, detach_ui_log_handler
+from scripts.ui_logging import LogRateLimiter, attach_ui_log_handler, detach_ui_log_handler
 from scripts.ui_theme import AppTheme
 from scripts import ui_copy as copy
+from scripts.subprocess_utils import popen_quiet
 
 
 APP_TITLE = copy.APP_DISPLAY_NAME
@@ -50,6 +51,7 @@ class GameplayAutoEditorApp:
         self.copilot_visible = True
         self.advanced_visible = False
         self.workflow_step = 1
+        self._log_rate_limiter = LogRateLimiter(interval_seconds=1.5)
 
         self.output_queue: queue.Queue = queue.Queue()
         self.selected_video: Path | None = None
@@ -240,6 +242,7 @@ class GameplayAutoEditorApp:
             bg=AppTheme.SURFACE,
             bd=0,
         )
+        AppTheme.configure_results_canvas(self.results_canvas_widget)
         self.results_scrollbar = ttk.Scrollbar(
             results_outer,
             orient="vertical",
@@ -513,6 +516,8 @@ class GameplayAutoEditorApp:
             self.output_queue.put(("EVENT", event))
 
         combined_report: dict | None = None
+        accumulated_clips: list[dict] = []
+        accumulated_ready: list[str] = []
         try:
             with redirect_stdout(writer):
                 for index, video_path in enumerate(targets, start=1):
@@ -523,9 +528,16 @@ class GameplayAutoEditorApp:
                         progress_callback=progress_callback,
                     )
                     self.batch_reports.append(report)
+                    accumulated_clips.extend(report.get("clips") or [])
+                    accumulated_ready.extend(report.get("clips_ready") or [])
                     combined_report = report
             if combined_report and len(self.batch_reports) > 1:
                 combined_report = self._merge_batch_reports(self.batch_reports)
+            elif combined_report:
+                combined_report = dict(combined_report)
+                combined_report["clips"] = accumulated_clips
+                combined_report["clips_ready"] = accumulated_ready
+                combined_report["clips_created"] = len(accumulated_clips)
             self.output_queue.put(("DONE", combined_report or {}))
             if self.video_queue:
                 self.video_queue.clear()
@@ -536,11 +548,18 @@ class GameplayAutoEditorApp:
             detach_ui_log_handler(ui_session)
 
     def _merge_batch_reports(self, reports: list[dict]) -> dict:
-        last = dict(reports[-1])
-        last["batch_count"] = len(reports)
-        last["clips_created"] = sum(int(report.get("clips_created", 0)) for report in reports)
-        last["batch_videos"] = [str(report.get("input_video", "")) for report in reports]
-        return last
+        merged = dict(reports[-1])
+        merged["batch_count"] = len(reports)
+        merged["clips_created"] = sum(int(report.get("clips_created", 0)) for report in reports)
+        merged["batch_videos"] = [str(report.get("input_video", "")) for report in reports]
+        merged["clips"] = []
+        merged["clips_ready"] = []
+        for report in reports:
+            merged["clips"].extend(report.get("clips") or [])
+            merged["clips_ready"].extend(report.get("clips_ready") or [])
+        if not merged.get("failure_reason") and merged["clips_created"] == 0:
+            merged["failure_reason"] = "render_failed"
+        return merged
 
     def save_openai_key(self) -> None:
         key = self.openai_key_var.get().strip()
@@ -620,18 +639,25 @@ class GameplayAutoEditorApp:
 
     def _apply_clips_event(self, event: dict) -> None:
         clip_count = int(event.get("count", 0))
-        message = event.get("message") or f"{clip_count} clip(s) ready to review."
+        message = event.get("message") or (copy.STATUS_DONE if clip_count else copy.SECTION_EMPTY_CLIPS)
         if event.get("type") == "clips_ready":
             self.progress_var.set(100.0)
             self.stage_var.set(message)
         self._append_progress(message)
-        report = {
-            "clips": event.get("clips") or [],
-            "clips_ready": event.get("clips_ready") or [],
-            "clips_created": max(clip_count, len(event.get("clips_ready") or [])),
-            "output_dir": event.get("output_dir") or str((PROJECT_ROOT / "final_clips").resolve()),
-        }
+        report = dict(self.report or {})
+        report.update(
+            {
+                "clips": event.get("clips") or [],
+                "clips_ready": event.get("clips_ready") or [],
+                "clips_created": max(clip_count, len(event.get("clips") or []), len(event.get("clips_ready") or [])),
+                "output_dir": event.get("output_dir") or str((PROJECT_ROOT / "final_clips").resolve()),
+                "failure_reason": event.get("failure_reason") or report.get("failure_reason"),
+            }
+        )
+        self.report = report
         self._show_results(report)
+        if clip_count:
+            self._set_workflow_step(3)
 
     def _generation_done(self, report: dict) -> None:
         self.report = report
@@ -707,7 +733,9 @@ class GameplayAutoEditorApp:
 
         final_dir = Path(report.get("output_dir") or PROJECT_ROOT / "final_clips")
         if final_dir.exists():
-            discovered = sorted(final_dir.glob("*.mp4"), key=lambda path: path.stat().st_mtime, reverse=True)
+            discovered = sorted(final_dir.glob("*_vertical.mp4"), key=lambda path: path.stat().st_mtime, reverse=True)
+            if not discovered:
+                discovered = sorted(final_dir.glob("*.mp4"), key=lambda path: path.stat().st_mtime, reverse=True)
             if discovered:
                 return [
                     {
@@ -726,27 +754,28 @@ class GameplayAutoEditorApp:
     def _show_results(self, report: dict) -> None:
         self._clear_results()
         clips = self._clips_for_display(report)
+        rendered_cards = 0
         if not clips:
             reason = report.get("failure_reason")
             if reason == "render_failed":
-                message = (
-                    "Highlights were detected but rendering failed. "
-                    "Check the log file for [FFmpeg] errors (font path, filter chain, or missing FFmpeg)."
-                )
+                message = copy.MSG_RENDER_FAILED
             else:
-                message = (
-                    "Clips are still being finalized. If nothing appears shortly, open the final clips folder "
-                    "or check the progress log for details."
-                )
-            ttk.Label(self.results_canvas, text=message, wraplength=900).pack(anchor=W)
+                message = copy.SECTION_EMPTY_CLIPS
+            ttk.Label(self.results_canvas, text=message, style="Muted.TLabel", wraplength=560).pack(
+                anchor=W, padx=8, pady=8
+            )
             log_file = report.get("log_file")
             if log_file:
-                ttk.Label(self.results_canvas, text=f"Log file: {log_file}", wraplength=900).pack(anchor=W, pady=(6, 0))
+                ttk.Label(self.results_canvas, text=f"Log file: {log_file}", style="Muted.TLabel", wraplength=560).pack(
+                    anchor=W, padx=8, pady=(0, 8)
+                )
             output_dir = report.get("output_dir") or str((PROJECT_ROOT / "final_clips").resolve())
-            ttk.Label(self.results_canvas, text=f"Output folder: {output_dir}", wraplength=900).pack(
-                anchor=W,
-                pady=(6, 0),
-            )
+            ttk.Label(
+                self.results_canvas,
+                text=f"Clips folder: {output_dir}",
+                style="Muted.TLabel",
+                wraplength=560,
+            ).pack(anchor=W, padx=8, pady=(0, 8))
             self._refresh_results_canvas()
             return
 
@@ -754,7 +783,10 @@ class GameplayAutoEditorApp:
             final_clip = self._resolve_clip_file(clip, report)
             if final_clip is None:
                 continue
+            if not final_clip.exists():
+                continue
 
+            rendered_cards += 1
             clip = dict(clip)
             clip["final_clip"] = str(final_clip)
 
@@ -848,6 +880,14 @@ class GameplayAutoEditorApp:
                     style="Ghost.TButton",
                     command=lambda c=clip: self.preview_frame(c),
                 ).pack(side=LEFT, padx=(6, 0))
+
+        if rendered_cards == 0:
+            ttk.Label(
+                self.results_canvas,
+                text=copy.SECTION_EMPTY_CLIPS,
+                style="Muted.TLabel",
+                wraplength=560,
+            ).pack(anchor=W, padx=8, pady=8)
 
         self._refresh_results_canvas()
 
@@ -1229,7 +1269,10 @@ class GameplayAutoEditorApp:
         self._refresh_results_canvas()
 
     def _append_progress(self, text: str) -> None:
-        self.progress_text.insert(END, text if text.endswith("\n") else text + "\n")
+        line = text if text.endswith("\n") else text + "\n"
+        if not self._log_rate_limiter.allow(line):
+            return
+        self.progress_text.insert(END, line)
         self.progress_text.see(END)
 
     def _on_mousewheel(self, event) -> None:
@@ -1344,9 +1387,9 @@ def open_path(path: Path) -> None:
     if sys.platform.startswith("win"):
         os.startfile(path)  # type: ignore[attr-defined]
     elif sys.platform == "darwin":
-        subprocess.Popen(["open", str(path)])
+        popen_quiet(["open", str(path)])
     else:
-        subprocess.Popen(["xdg-open", str(path)])
+        popen_quiet(["xdg-open", str(path)])
 
 
 def _add_packaged_bin_to_path() -> None:

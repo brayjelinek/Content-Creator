@@ -7,12 +7,13 @@ from __future__ import annotations
 
 import logging
 import re
-import subprocess
 import tempfile
 from pathlib import Path
 
 import cv2
 import numpy as np
+
+from scripts.subprocess_utils import run_quiet
 
 from scripts.detection_profiles import crop_region
 from scripts.ocr_utils import read_killfeed_region
@@ -132,7 +133,7 @@ def _ffmpeg_volume_stats(clip_path: Path) -> tuple[float | None, float | None]:
         "null",
         "-",
     ]
-    result = subprocess.run(command, capture_output=True, text=True, check=False)
+    result = run_quiet(command)
     stderr = result.stderr or ""
     mean_match = re.search(r"mean_volume:\s*(-?\d+(?:\.\d+)?)\s*dB", stderr)
     max_match = re.search(r"max_volume:\s*(-?\d+(?:\.\d+)?)\s*dB", stderr)

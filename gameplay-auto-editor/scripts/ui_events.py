@@ -71,28 +71,35 @@ def emit_clips_ready(
     clips: list[dict] | None = None,
     output_dir: str | None = None,
     percent: int = 100,
+    failure_reason: str | None = None,
 ) -> None:
     """Notify UI that final clips are ready to display."""
-    resolved = [str(Path(path).resolve()) for path in clip_paths if path]
+    clip_items = list(clips or [])
+    resolved = resolve_clip_paths(clip_items, Path(output_dir) if output_dir else None)
+    if not resolved and clip_paths:
+        resolved = [str(Path(path).resolve()) for path in clip_paths if path and Path(path).exists()]
+    count = max(len(resolved), len(clip_items))
     event = {
         "type": "clips_ready",
         "stage": STAGE_FINALIZING,
         "percent": percent,
         "clips_ready": resolved,
-        "clips": clips or [],
-        "count": len(resolved),
+        "clips": clip_items,
+        "count": count,
         "output_dir": output_dir,
-        "message": f"{len(resolved)} clip(s) ready to review.",
+        "failure_reason": failure_reason,
+        "message": f"{count} clip(s) ready to review." if count else "No clips were created.",
     }
     try:
         if callback:
             callback(event)
-        logger.info("[UI] Clips ready: %s clips", len(resolved))
+        logger.info("[UI] Clips ready: %s clips", count)
         emit_refresh_clips_ui(
             callback,
             clip_paths=resolved,
-            clips=clips or [],
+            clips=clip_items,
             output_dir=output_dir,
+            failure_reason=failure_reason,
         )
     except Exception as exc:  # noqa: BLE001
         logger.debug("[UI] Clips ready callback failed: %s", exc)
@@ -104,15 +111,19 @@ def emit_refresh_clips_ui(
     clip_paths: list[str],
     clips: list[dict] | None = None,
     output_dir: str | None = None,
+    failure_reason: str | None = None,
 ) -> None:
     """Force the desktop UI to refresh the clip review panel."""
+    clip_items = list(clips or [])
+    count = max(len(clip_paths), len(clip_items))
     event = {
         "type": "refresh_clips_ui",
         "clips_ready": clip_paths,
-        "clips": clips or [],
-        "count": len(clip_paths),
+        "clips": clip_items,
+        "count": count,
         "output_dir": output_dir,
-        "message": f"{len(clip_paths)} clip(s) ready to review.",
+        "failure_reason": failure_reason,
+        "message": f"{count} clip(s) ready to review." if count else "No clips were created.",
     }
     try:
         if callback:

@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import logging
-import subprocess
 from pathlib import Path
 from typing import Any
+
+from scripts.subprocess_utils import run_quiet
 
 from scripts.clip_cutter import (
     _build_drawtext_filter,
@@ -84,17 +85,12 @@ def enhance_rendered_clip(clip_path: str | Path, highlight: dict, render_config:
         logger.info("[Enhancer] Clip too short for polish (%.2fs)", duration)
         return False
 
-    use_slowmo = bool(viral.get("slowmo_enabled", True)) and is_validated_for_slowmo(highlight, viral)
-    use_premium = is_validated_for_premium_effects(highlight, viral)
-    burn_captions = bool(
-        viral.get("burn_captions_when_overlay_missing", True) and not highlight.get("overlay_applied", True)
-    )
-    burn_hook = bool(viral.get("always_burn_hook_text", False)) or burn_captions
+    use_slowmo, use_premium, burn_captions, burn_hook = _resolve_effect_flags(highlight, viral)
     impact_t = _impact_time_in_clip(highlight, duration)
     temp_output = clip_path.with_suffix(".viral.tmp.mp4")
 
     try:
-        _render_enhanced_clip(
+        filter_summary = _render_enhanced_clip(
             input_path=clip_path,
             output_path=temp_output,
             highlight=highlight,
@@ -108,6 +104,8 @@ def enhance_rendered_clip(clip_path: str | Path, highlight: dict, render_config:
             burn_hook=burn_hook,
         )
         temp_output.replace(clip_path)
+        resolved_path = str(clip_path.resolve())
+        highlight["final_clip"] = resolved_path
         highlight["viral_enhanced"] = True
         highlight["viral_slowmo_applied"] = use_slowmo
         highlight["viral_captions_burned"] = burn_captions
@@ -117,27 +115,35 @@ def enhance_rendered_clip(clip_path: str | Path, highlight: dict, render_config:
         highlight["moment_validated"] = use_premium
         if apply_styled_ass_captions(clip_path, highlight, settings, viral):
             highlight["viral_ass_captions_applied"] = True
-        applied = []
-        if burn_captions:
-            applied.append("hook/caption overlays")
-        if viral.get("zoom_enabled", True) and use_premium:
-            applied.append("impact zoom")
-        if viral.get("impact_text_enabled", True) and use_premium:
-            applied.append("impact text")
-        if use_premium:
-            applied.append("contrast/audio polish")
-        if use_slowmo:
-            applied.append("pre-impact slow-mo")
-        if highlight.get("viral_sound_effect_applied"):
-            applied.append("impact SFX")
-        if highlight.get("viral_ass_captions_applied"):
-            applied.append("styled ASS captions")
-        logger.info("[Enhancer] Applied to %s: %s", clip_path.name, ", ".join(applied))
+        logger.info("[Enhancer] Filters applied: %s", filter_summary)
+        logger.info("[Enhancer] Using enhanced clip path: %s", resolved_path)
         return True
     except Exception as exc:  # noqa: BLE001 - never break pipeline
-        logger.warning("[Enhancer] Polish failed — keeping original clip: %s", exc)
+        logger.warning("[Enhancer] Fallback to raw clip: %s", exc)
         temp_output.unlink(missing_ok=True)
         return False
+
+
+def _resolve_effect_flags(highlight: dict, viral: dict) -> tuple[bool, bool, bool, bool]:
+    """Decide which viral effects to apply with safe fallbacks."""
+    is_fallback = str(highlight.get("selection_mode", "")).startswith("fallback")
+    always_polish = bool(viral.get("always_apply_polish", True))
+    burn_captions = bool(
+        viral.get("burn_captions_when_overlay_missing", True) and not highlight.get("overlay_applied", True)
+    )
+    burn_hook = bool(viral.get("always_burn_hook_text", False)) or burn_captions
+
+    if is_fallback:
+        return False, False, burn_captions, burn_hook
+
+    if always_polish:
+        use_slowmo = bool(viral.get("slowmo_enabled", True))
+        use_premium = True
+    else:
+        use_slowmo = bool(viral.get("slowmo_enabled", True)) and is_validated_for_slowmo(highlight, viral)
+        use_premium = is_validated_for_premium_effects(highlight, viral)
+
+    return use_slowmo, use_premium, burn_captions, burn_hook
 
 
 def _impact_time_in_clip(highlight: dict, clip_duration: float) -> float:
@@ -160,7 +166,8 @@ def _render_enhanced_clip(
     use_premium: bool,
     burn_captions: bool,
     burn_hook: bool,
-) -> None:
+) -> str:
+    """Render enhanced clip; returns a short summary of applied filters."""
     has_audio = probe_has_audio(input_path)
     sfx_path = _resolve_sound_effect_path(viral, settings)
     filter_chain = build_viral_filter_chain(
@@ -177,6 +184,91 @@ def _render_enhanced_clip(
         sfx_input_index=1 if sfx_path else None,
     )
 
+    summary = _describe_filter_summary(
+        viral=viral,
+        use_slowmo=use_slowmo,
+        use_premium=use_premium,
+        burn_captions=burn_captions,
+        burn_hook=burn_hook,
+        has_sfx=bool(sfx_path),
+    )
+    logger.info(
+        "[Enhancer] Running viral polish (slowmo=%s premium=%s captions=%s)",
+        use_slowmo,
+        use_premium,
+        burn_captions,
+    )
+    logger.debug("[Enhancer] Filter chain: %s", filter_chain)
+
+    try:
+        _run_ffmpeg_enhance(
+            input_path=input_path,
+            output_path=output_path,
+            filter_chain=filter_chain,
+            settings=settings,
+            has_audio=has_audio,
+            sfx_path=sfx_path,
+        )
+        return summary
+    except Exception as primary_exc:
+        if not use_premium and not use_slowmo:
+            raise primary_exc
+        logger.info("[Enhancer] Primary filter chain failed, trying baseline polish")
+        baseline_chain = build_baseline_polish_chain(
+            clip_duration=clip_duration,
+            impact_t=impact_t,
+            highlight=highlight,
+            settings=settings,
+            viral=viral,
+            include_audio=has_audio,
+            burn_captions=burn_captions,
+            burn_hook=burn_hook,
+        )
+        _run_ffmpeg_enhance(
+            input_path=input_path,
+            output_path=output_path,
+            filter_chain=baseline_chain,
+            settings=settings,
+            has_audio=has_audio,
+            sfx_path=None,
+        )
+        return "baseline contrast + text polish"
+
+
+def _describe_filter_summary(
+    *,
+    viral: dict,
+    use_slowmo: bool,
+    use_premium: bool,
+    burn_captions: bool,
+    burn_hook: bool,
+    has_sfx: bool,
+) -> str:
+    parts: list[str] = []
+    if use_slowmo:
+        parts.append("pre-impact slow-mo")
+    if viral.get("zoom_enabled", True) and use_premium:
+        parts.append("impact zoom")
+    if viral.get("impact_text_enabled", True) and use_premium:
+        parts.append("impact text")
+    if use_premium:
+        parts.append("motion emphasis")
+    if burn_captions or burn_hook:
+        parts.append("hook/caption overlays")
+    if has_sfx:
+        parts.append("impact SFX")
+    return ", ".join(parts) or "format polish"
+
+
+def _run_ffmpeg_enhance(
+    *,
+    input_path: Path,
+    output_path: Path,
+    filter_chain: str,
+    settings: dict,
+    has_audio: bool,
+    sfx_path: Path | None,
+) -> None:
     command = [
         "ffmpeg",
         "-y",
@@ -208,19 +300,73 @@ def _render_enhanced_clip(
             str(output_path),
         ]
     )
-
-    logger.info(
-        "[Enhancer] Running viral polish (slowmo=%s captions=%s sfx=%s)",
-        use_slowmo,
-        burn_captions,
-        bool(sfx_path),
-    )
-    logger.debug("[Enhancer] Filter chain: %s", filter_chain)
-    result = subprocess.run(command, capture_output=True, text=True, check=False)
+    result = run_quiet(command, filter_chain=filter_chain)
     if result.returncode != 0:
         raise RuntimeError(result.stderr.strip() or "FFmpeg enhancement failed")
     if not output_path.exists() or output_path.stat().st_size <= 0:
         raise RuntimeError("Enhanced output missing or empty")
+
+
+def build_baseline_polish_chain(
+    *,
+    clip_duration: float,
+    impact_t: float,
+    highlight: dict,
+    settings: dict,
+    viral: dict,
+    include_audio: bool,
+    burn_captions: bool,
+    burn_hook: bool,
+) -> str:
+    """Safe fallback chain: contrast/vibrance plus optional text overlays."""
+    contrast = float(viral.get("contrast_boost", 1.08))
+    brightness = float(viral.get("brightness_boost", 0.02))
+    video_chain = f"[0:v]eq=contrast={contrast:.3f}:brightness={brightness:.3f}[vbase]"
+    last_video = "[vbase]"
+
+    draw_filters: list[str] = []
+    if burn_captions or burn_hook:
+        _append_hook_and_caption_filters(
+            filters=draw_filters,
+            highlight=highlight,
+            settings=settings,
+            include_hook=bool(burn_hook or burn_captions),
+            include_caption=bool(burn_captions),
+        )
+    if viral.get("impact_text_enabled", True):
+        height = int(settings["height"])
+        bottom_safe = int(settings["bottom_safe_zone"])
+        caption_font = int(settings.get("impact_font_size", 72))
+        font_path = resolve_font_path(settings.get("font_candidates"))
+        box_color = str(settings["text_box_color"])
+        box_border = int(settings["text_box_border"])
+        impact_label = sanitize_overlay_text(str(highlight.get("impact_text") or "INSANE").upper())
+        impact_y = height - bottom_safe - caption_font - 20
+        font_opt = f"fontfile={format_font_path(font_path)}:" if font_path else ""
+        impact_end = min(impact_t + float(viral.get("impact_display_seconds", 1.2)), clip_duration + 1.0)
+        draw_filters.append(
+            f"drawtext={font_opt}"
+            f'text="{impact_label}":fontsize={caption_font}:fontcolor=white:'
+            f"box=1:boxcolor={box_color}:boxborderw={box_border}:"
+            f"x=(w-text_w)/2:y={impact_y}:"
+            f"enable='between(t,{impact_t:.3f},{impact_end:.3f})'"
+        )
+
+    if draw_filters:
+        video_chain += f";{last_video}{','.join(draw_filters)}[vout]"
+    else:
+        video_chain += f";{last_video}format=yuv420p[vout]"
+
+    if not include_audio:
+        return video_chain
+
+    audio_boost = float(viral.get("audio_boost_db", 3))
+    boost_end = impact_t + 0.45
+    audio_chain = (
+        f"[0:a]aformat=sample_rates=48000:channel_layouts=stereo,"
+        f"volume={audio_boost:.1f}dB:enable='between(t,{impact_t:.3f},{boost_end:.3f})'[aout]"
+    )
+    return f"{video_chain};{audio_chain}"
 
 
 def _append_hook_and_caption_filters(
@@ -539,7 +685,7 @@ def apply_styled_ass_captions(
     ]
 
     try:
-        result = subprocess.run(command, capture_output=True, text=True, check=False)
+        result = run_quiet(command)
         if result.returncode != 0 or not temp_output.exists():
             logger.info("[Enhancer] ASS captions skipped: %s", (result.stderr or "").strip())
             return False

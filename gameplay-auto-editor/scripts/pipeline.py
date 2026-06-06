@@ -285,6 +285,7 @@ def run_pipeline(
         try:
             enhanced = enhance_rendered_clip(clip["final_clip"], clip, render_config)
             if enhanced:
+                clip["final_clip"] = str(Path(clip["final_clip"]).resolve())
                 clip["viral_enhanced"] = True
                 clip["quality_tier"] = quality_tier(clip)
                 emit_ui_notice(
@@ -327,6 +328,7 @@ def run_pipeline(
         clips=rendered,
         output_dir=output_dir,
         percent=100,
+        failure_reason=failure_reason,
     )
 
     detection_mode = provider

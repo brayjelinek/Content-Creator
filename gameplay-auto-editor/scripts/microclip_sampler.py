@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import subprocess
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import List
@@ -12,6 +11,7 @@ import cv2
 import numpy as np
 
 from scripts.gameplay_signals import analyze_microclip_signals, audio_waveform_summary
+from scripts.subprocess_utils import run_quiet
 
 logger = logging.getLogger(__name__)
 
@@ -182,7 +182,7 @@ def _cut_microclip(video_path: Path, output_path: Path, start: float, duration: 
         "+faststart",
         str(output_path),
     ]
-    result = subprocess.run(command, capture_output=True, text=True, check=False)
+    result = run_quiet(command)
     return result.returncode == 0 and output_path.exists() and output_path.stat().st_size > 0
 
 
@@ -239,7 +239,7 @@ def _probe_duration(video_path: Path) -> float:
         "default=noprint_wrappers=1:nokey=1",
         str(video_path),
     ]
-    result = subprocess.run(command, capture_output=True, text=True, check=False)
+    result = run_quiet(command)
     try:
         return max(0.0, float((result.stdout or "0").strip()))
     except ValueError:

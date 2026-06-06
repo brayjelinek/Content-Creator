@@ -20,6 +20,7 @@ from scripts.pipeline_validation import (
 )
 from scripts.render_settings import OUTPUT_WIDTH, merge_render_config, resolve_font_path
 from scripts.smart_reframe import apply_smart_reframe, merge_reframe_settings
+from scripts.subprocess_utils import run_quiet
 from scripts.text_utils import sanitize_overlay_text, wrap_overlay_text
 
 logger = logging.getLogger(__name__)
@@ -642,7 +643,7 @@ def _run_ffmpeg(
     filter_chain: str | None = None,
 ) -> subprocess.CompletedProcess:
     """Run FFmpeg/ffprobe and include command and filter details on failure."""
-    result = subprocess.run(command, capture_output=True, text=True, check=False)
+    result = run_quiet(command, stage=stage, filter_chain=filter_chain)
     if result.returncode != 0:
         details = [
             f"FFmpeg stage failed: {stage}",

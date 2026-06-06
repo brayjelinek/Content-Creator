@@ -6,10 +6,11 @@ import json
 import logging
 import os
 import shutil
-import subprocess
 import tempfile
 from pathlib import Path
 from typing import Any
+
+from scripts.subprocess_utils import run_quiet
 
 logger = logging.getLogger(__name__)
 
@@ -113,7 +114,7 @@ def _extract_audio_segment(video_path: Path, output_path: Path, start: float, du
         "pcm_s16le",
         str(output_path),
     ]
-    result = subprocess.run(command, capture_output=True, text=True, check=False)
+    result = run_quiet(command)
     return result.returncode == 0 and output_path.exists() and output_path.stat().st_size > 0
 
 
@@ -140,7 +141,7 @@ def _transcribe_whisper_cli(audio_path: Path, config: dict) -> dict[str, Any] | 
         if language:
             command.extend(["--language", language])
 
-        result = subprocess.run(command, capture_output=True, text=True, check=False)
+        result = run_quiet(command)
         if result.returncode != 0:
             logger.info("[Transcription] whisper CLI failed — skipping")
             return None

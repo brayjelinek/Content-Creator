@@ -118,5 +118,9 @@ MSG_FFMPEG_MISSING = (
     "Install FFmpeg, then reopen the app."
 )
 MSG_NO_CLIPS_YET = "Create clips first, then they'll appear here."
+MSG_RENDER_FAILED = (
+    "We found highlight moments but couldn't finish rendering. "
+    "Open the activity log below for FFmpeg details."
+)
 MSG_CAPTIONS_COPIED = "Captions copied to clipboard."
 MSG_CLIP_READY = "No video selected yet"
