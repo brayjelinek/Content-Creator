@@ -22,9 +22,10 @@ from scripts.pipeline import PROJECT_ROOT, load_config, run_pipeline
 from scripts.social_publish.manager import SocialPublishManager
 from scripts.ui_logging import attach_ui_log_handler, detach_ui_log_handler
 from scripts.ui_theme import AppTheme
+from scripts import ui_copy as copy
 
 
-APP_TITLE = "Gameplay Auto Editor"
+APP_TITLE = copy.APP_DISPLAY_NAME
 
 
 class QueueWriter:
@@ -47,12 +48,14 @@ class GameplayAutoEditorApp:
         self.root.minsize(1024, 700)
         self.theme = AppTheme.apply(self.root)
         self.copilot_visible = True
+        self.advanced_visible = False
+        self.workflow_step = 1
 
         self.output_queue: queue.Queue = queue.Queue()
         self.selected_video: Path | None = None
         self.report: dict | None = None
         self.progress_var = DoubleVar(value=0.0)
-        self.stage_var = StringVar(value="Waiting to start...")
+        self.stage_var = StringVar(value=copy.STATUS_IDLE)
 
         self.provider_var = StringVar(value=self._initial_provider())
         self.max_clips_var = StringVar(value="5")
@@ -63,7 +66,7 @@ class GameplayAutoEditorApp:
         self.theme_var = StringVar(value=self._initial_theme())
         self.game_profile_var = StringVar(value=self._initial_game_profile())
         self.smart_reframe_var = StringVar(value=self._initial_smart_reframe())
-        self.status_var = StringVar(value="Choose a gameplay video to begin.")
+        self.status_var = StringVar(value=copy.STATUS_IDLE)
         self.openai_key_var = StringVar(value="")
         self.key_status_var = StringVar(value=self._api_key_status())
         self.ocr_status_var = StringVar(value=self._ocr_status())
@@ -94,21 +97,17 @@ class GameplayAutoEditorApp:
         shell.pack(fill=BOTH, expand=True)
 
         top = ttk.Frame(shell)
-        top.pack(fill="x", pady=(0, 12))
+        top.pack(fill="x", pady=(0, 10))
         title_block = ttk.Frame(top)
         title_block.pack(side=LEFT, fill="x", expand=True)
         ttk.Label(title_block, text=APP_TITLE, style="Title.TLabel").pack(anchor=W)
-        ttk.Label(
-            title_block,
-            text="Gameplay → vertical clips → review → export",
-            style="Subtitle.TLabel",
-        ).pack(anchor=W, pady=(2, 0))
+        ttk.Label(title_block, text=copy.HERO_SUBLINE, style="Subtitle.TLabel").pack(anchor=W, pady=(2, 0))
 
         top_actions = ttk.Frame(top)
         top_actions.pack(side=RIGHT)
         self.copilot_toggle_btn = ttk.Button(
             top_actions,
-            text="Hide Copilot",
+            text=copy.BTN_HIDE_ASSISTANT,
             style="Ghost.TButton",
             command=self.toggle_copilot_panel,
         )
@@ -135,68 +134,96 @@ class GameplayAutoEditorApp:
         self._build_copilot_panel(self.copilot_panel)
 
     def _build_workflow_panel(self, parent: ttk.Frame) -> None:
-        hero = ttk.Frame(parent, style="Elevated.TFrame", padding=14)
-        hero.pack(fill="x", pady=(0, 10))
+        steps = ttk.Frame(parent, style="Steps.TFrame", padding=(0, 0, 0, 10))
+        steps.pack(fill="x")
+        self.step_labels: list[ttk.Label] = []
+        for index, label in enumerate((copy.STEP_PICK, copy.STEP_CREATE, copy.STEP_REVIEW)):
+            style = "StepActive.TLabel" if index == 0 else "Step.TLabel"
+            step_label = ttk.Label(steps, text=label, style=style)
+            step_label.pack(side=LEFT, padx=(0, 18))
+            self.step_labels.append(step_label)
 
-        file_row = ttk.Frame(hero, style="Elevated.TFrame")
+        hero = ttk.Frame(parent, style="Hero.TFrame", padding=16)
+        hero.pack(fill="x", pady=(0, 10))
+        ttk.Label(hero, text=copy.HERO_HEADLINE, style="Hero.TLabel", wraplength=620).pack(anchor=W)
+        ttk.Label(hero, text=copy.HERO_SUBLINE, style="HeroMuted.TLabel", wraplength=620).pack(anchor=W, pady=(6, 12))
+
+        file_row = ttk.Frame(hero, style="Hero.TFrame")
         file_row.pack(fill="x")
-        ttk.Button(file_row, text="Choose video", command=self.choose_video).pack(side=LEFT)
-        ttk.Button(file_row, text="Add to queue", style="Ghost.TButton", command=self.add_to_queue).pack(
+        ttk.Button(file_row, text=copy.BTN_SELECT_VIDEO, command=self.choose_video).pack(side=LEFT)
+        ttk.Button(file_row, text=copy.BTN_ADD_QUEUE, style="Ghost.TButton", command=self.add_to_queue).pack(
             side=LEFT, padx=(8, 0)
         )
-        ttk.Button(file_row, text="Clear queue", style="Ghost.TButton", command=self.clear_queue).pack(
+        ttk.Button(file_row, text=copy.BTN_CLEAR_QUEUE, style="Ghost.TButton", command=self.clear_queue).pack(
             side=LEFT, padx=(8, 0)
         )
-        self.file_label = ttk.Label(file_row, text="No video selected", style="CardMuted.TLabel")
+        self.file_label = ttk.Label(file_row, text=copy.MSG_CLIP_READY, style="HeroCardMuted.TLabel")
         self.file_label.pack(side=LEFT, padx=(14, 0))
 
-        queue_row = ttk.Frame(hero, style="Elevated.TFrame")
+        queue_row = ttk.Frame(hero, style="Hero.TFrame")
         queue_row.pack(fill="x", pady=(10, 0))
-        ttk.Label(queue_row, text="Batch queue", style="CardMuted.TLabel").pack(anchor=W)
+        ttk.Label(queue_row, text="Batch queue", style="HeroCardMuted.TLabel").pack(anchor=W)
         self.queue_listbox = ttk.Treeview(queue_row, columns=("video",), show="headings", height=2)
-        self.queue_listbox.heading("video", text="Queued videos")
+        self.queue_listbox.heading("video", text="Videos waiting to process")
         self.queue_listbox.column("video", width=520, stretch=True)
         self.queue_listbox.pack(fill="x", pady=(4, 0))
+
+        settings_header = ttk.Frame(parent, style="Surface.TFrame")
+        settings_header.pack(fill="x", pady=(0, 4))
+        ttk.Label(settings_header, text=copy.SECTION_CLIP_SETTINGS, style="Surface.TLabel", font=AppTheme.FONT_UI_BOLD).pack(
+            side=LEFT
+        )
+        self.advanced_toggle_btn = ttk.Button(
+            settings_header,
+            text=copy.BTN_SHOW_ADVANCED,
+            style="Ghost.TButton",
+            command=self.toggle_advanced_settings,
+        )
+        self.advanced_toggle_btn.pack(side=RIGHT)
 
         settings = ttk.Frame(parent, style="Surface.TFrame", padding=(0, 4))
         settings.pack(fill="x", pady=(0, 10))
         row_a = ttk.Frame(settings, style="Surface.TFrame")
         row_a.pack(fill="x")
-        row_b = ttk.Frame(settings, style="Surface.TFrame")
-        row_b.pack(fill="x", pady=(8, 0))
-        self._add_combobox(row_a, "Vision", self.provider_var, ["heuristic", "auto", "openai", "anthropic"])
-        self._add_spinbox(row_a, "Max clips", self.max_clips_var, 1, 10)
-        self._add_spinbox(row_a, "Min score", self.min_score_var, 0, 100)
-        self._add_combobox(row_a, "Platform", self.platform_var, ["generic", "tiktok", "youtube_shorts", "instagram_reels"])
-        self._add_combobox(row_b, "Theme", self.theme_var, ["default", "hormozi", "minimal", "gen_z"])
-        self._add_combobox(row_b, "Game", self.game_profile_var, ["generic", "valorant", "cod", "fortnite"])
-        self._add_combobox(row_b, "Reframe", self.smart_reframe_var, ["off", "on"])
-        self._add_spinbox(row_b, "Interval (s)", self.interval_var, 1, 10)
-        self._add_spinbox(row_b, "AI frames", self.max_frames_var, 1, 40)
+        self._add_combobox(row_a, copy.LBL_DETECTION, self.provider_var, list(copy.DETECTION_LABEL_TO_VALUE))
+        self._add_spinbox(row_a, copy.LBL_CLIP_COUNT, self.max_clips_var, 1, 10)
+        self._add_spinbox(row_a, copy.LBL_SENSITIVITY, self.min_score_var, 0, 100)
+        self._add_combobox(row_a, copy.LBL_EXPORT_FOR, self.platform_var, list(copy.PLATFORM_LABEL_TO_VALUE))
+
+        self.advanced_settings = ttk.Frame(settings, style="Surface.TFrame")
+        row_b = ttk.Frame(self.advanced_settings, style="Surface.TFrame")
+        row_b.pack(fill="x")
+        row_c = ttk.Frame(self.advanced_settings, style="Surface.TFrame")
+        row_c.pack(fill="x", pady=(8, 0))
+        self._add_combobox(row_b, copy.LBL_LOOK, self.theme_var, list(copy.THEME_LABEL_TO_VALUE))
+        self._add_combobox(row_b, copy.LBL_GAME, self.game_profile_var, list(copy.GAME_LABEL_TO_VALUE))
+        self._add_combobox(row_b, copy.LBL_FACECAM, self.smart_reframe_var, list(copy.REFRAME_LABEL_TO_VALUE))
+        self._add_spinbox(row_c, copy.LBL_SCAN_EVERY, self.interval_var, 1, 10)
+        self._add_spinbox(row_c, copy.LBL_AI_FRAMES, self.max_frames_var, 1, 40)
 
         action_row = ttk.Frame(parent, style="Surface.TFrame")
         action_row.pack(fill="x", pady=(0, 10))
         self.generate_button = ttk.Button(
             action_row,
-            text="Generate clips",
+            text=copy.BTN_CREATE_CLIPS,
             style="Accent.TButton",
             command=self.generate_clips,
         )
         self.generate_button.pack(side=LEFT)
         ttk.Button(
             action_row,
-            text="Open output",
+            text=copy.BTN_OPEN_FOLDER,
             style="Ghost.TButton",
             command=lambda: open_path(PROJECT_ROOT / "final_clips"),
         ).pack(side=LEFT, padx=(8, 0))
-        ttk.Button(action_row, text="Export all", style="Ghost.TButton", command=self.export_all_clips).pack(
+        ttk.Button(action_row, text=copy.BTN_SAVE_ALL, style="Ghost.TButton", command=self.export_all_clips).pack(
             side=LEFT, padx=(8, 0)
         )
-        ttk.Button(action_row, text="Copy captions", style="Ghost.TButton", command=self.copy_all_captions).pack(
+        ttk.Button(action_row, text=copy.BTN_COPY_CAPTIONS, style="Ghost.TButton", command=self.copy_all_captions).pack(
             side=LEFT, padx=(8, 0)
         )
 
-        progress = ttk.LabelFrame(parent, text="Progress", padding=10)
+        progress = ttk.LabelFrame(parent, text=copy.SECTION_CREATING, padding=10)
         progress.pack(fill="x", pady=(0, 10))
         self.progress_bar = ttk.Progressbar(progress, variable=self.progress_var, maximum=100)
         self.progress_bar.pack(fill="x", pady=(0, 6))
@@ -205,7 +232,7 @@ class GameplayAutoEditorApp:
         AppTheme.configure_text_widget(self.progress_text, mono=True)
         self.progress_text.pack(fill="x")
 
-        results_outer = ttk.LabelFrame(parent, text="Clips", padding=10)
+        results_outer = ttk.LabelFrame(parent, text=copy.SECTION_YOUR_CLIPS, padding=10)
         results_outer.pack(fill=BOTH, expand=True, pady=(0, 10))
         self.results_canvas_widget = Canvas(
             results_outer,
@@ -234,8 +261,9 @@ class GameplayAutoEditorApp:
         self.results_canvas_widget.bind_all("<MouseWheel>", self._on_mousewheel)
         self.results_placeholder = ttk.Label(
             self.results_canvas,
-            text="Your generated clips will appear here.",
+            text=copy.SECTION_EMPTY_CLIPS,
             style="Muted.TLabel",
+            wraplength=560,
         )
         self.results_placeholder.pack(anchor=W, padx=4, pady=8)
 
@@ -245,11 +273,11 @@ class GameplayAutoEditorApp:
 
     def _build_integrations_tabs(self, notebook: ttk.Notebook) -> None:
         social_tab = ttk.Frame(notebook, style="Surface.TFrame", padding=10)
-        notebook.add(social_tab, text="Publish")
+        notebook.add(social_tab, text=copy.TAB_SHARE)
         self.social_frame = social_tab
         ttk.Label(
             social_tab,
-            text="Connect platforms to post directly. Tokens stay in your OS keychain.",
+            text=copy.TAB_SHARE_HELP,
             style="Muted.TLabel",
             wraplength=560,
         ).pack(anchor=W)
@@ -275,7 +303,7 @@ class GameplayAutoEditorApp:
             ).pack(side=LEFT, padx=(6, 0))
 
         api_tab = ttk.Frame(notebook, style="Surface.TFrame", padding=10)
-        notebook.add(api_tab, text="Vision API")
+        notebook.add(api_tab, text=copy.TAB_SMARTER)
         ttk.Label(api_tab, textvariable=self.key_status_var, style="Muted.TLabel", wraplength=560).pack(anchor=W)
         api_row = ttk.Frame(api_tab, style="Surface.TFrame")
         api_row.pack(fill="x", pady=(8, 0))
@@ -284,7 +312,7 @@ class GameplayAutoEditorApp:
         ttk.Button(api_row, text="Save", style="Ghost.TButton", command=self.save_openai_key).pack(side=LEFT)
 
         ocr_tab = ttk.Frame(notebook, style="Surface.TFrame", padding=10)
-        notebook.add(ocr_tab, text="OCR")
+        notebook.add(ocr_tab, text=copy.TAB_KILLFEED)
         ttk.Label(ocr_tab, textvariable=self.ocr_status_var, style="Muted.TLabel", wraplength=560).pack(anchor=W)
         ttk.Label(
             ocr_tab,
@@ -301,10 +329,10 @@ class GameplayAutoEditorApp:
 
         header = ttk.Frame(parent, style="Copilot.TFrame", padding=(14, 12))
         header.pack(fill="x")
-        ttk.Label(header, text="AI Copilot", style="Copilot.TLabel", font=AppTheme.FONT_UI_BOLD).pack(anchor=W)
+        ttk.Label(header, text=copy.ASSISTANT_TITLE, style="Copilot.TLabel", font=AppTheme.FONT_UI_BOLD).pack(anchor=W)
         ttk.Label(
             header,
-            text="Clip insights · setup · settings · posting",
+            text=copy.ASSISTANT_TAGLINE,
             style="CopilotMuted.TLabel",
         ).pack(anchor=W, pady=(2, 0))
         ttk.Label(header, textvariable=self.agent_status_var, style="CopilotMuted.TLabel", wraplength=300).pack(
@@ -314,10 +342,10 @@ class GameplayAutoEditorApp:
         chips = ttk.Frame(parent, style="Copilot.TFrame", padding=(12, 0))
         chips.pack(fill="x")
         for label, key in (
-            ("Explain", "explain_clips"),
-            ("Setup", "help_setup"),
-            ("Settings", "suggest_settings"),
-            ("Post tips", "posting_strategy"),
+            (copy.CHIP_EXPLAIN, "explain_clips"),
+            (copy.CHIP_SETUP, "help_setup"),
+            (copy.CHIP_SETTINGS, "suggest_settings"),
+            (copy.CHIP_POST, "posting_strategy"),
         ):
             ttk.Button(chips, text=label, style="Chip.TButton", command=lambda k=key: self.agent_quick_prompt(k)).pack(
                 side=LEFT, padx=(0, 6), pady=(0, 8)
@@ -337,10 +365,10 @@ class GameplayAutoEditorApp:
         self.agent_entry = ttk.Entry(input_shell, textvariable=self.agent_input_var, style="Copilot.TEntry")
         self.agent_entry.pack(side=LEFT, fill="x", expand=True)
         self.agent_entry.bind("<Return>", lambda _event: self.agent_send_message())
-        ttk.Button(composer, text="Send", style="Accent.TButton", command=self.agent_send_message).pack(
+        ttk.Button(composer, text=copy.BTN_ASK, style="Accent.TButton", command=self.agent_send_message).pack(
             fill="x", pady=(8, 0)
         )
-        ttk.Button(composer, text="Clear conversation", style="Ghost.TButton", command=self.agent_clear_chat).pack(
+        ttk.Button(composer, text=copy.BTN_CLEAR_CHAT, style="Ghost.TButton", command=self.agent_clear_chat).pack(
             fill="x", pady=(6, 0)
         )
 
@@ -348,26 +376,43 @@ class GameplayAutoEditorApp:
         if self.copilot_visible:
             self.main_pane.forget(self.copilot_panel)
             self.copilot_visible = False
-            self.copilot_toggle_btn.configure(text="Show Copilot")
+            self.copilot_toggle_btn.configure(text=copy.BTN_SHOW_ASSISTANT)
         else:
             self.main_pane.add(self.copilot_panel, minsize=320)
             self.copilot_visible = True
-            self.copilot_toggle_btn.configure(text="Hide Copilot")
+            self.copilot_toggle_btn.configure(text=copy.BTN_HIDE_ASSISTANT)
+
+    def toggle_advanced_settings(self) -> None:
+        if self.advanced_visible:
+            self.advanced_settings.pack_forget()
+            self.advanced_visible = False
+            self.advanced_toggle_btn.configure(text=copy.BTN_SHOW_ADVANCED)
+        else:
+            self.advanced_settings.pack(fill="x", pady=(8, 0))
+            self.advanced_visible = True
+            self.advanced_toggle_btn.configure(text=copy.BTN_HIDE_ADVANCED)
+
+    def _set_workflow_step(self, step: int) -> None:
+        self.workflow_step = max(1, min(step, 3))
+        for index, label in enumerate((copy.STEP_PICK, copy.STEP_CREATE, copy.STEP_REVIEW)):
+            style = "StepActive.TLabel" if index + 1 == self.workflow_step else "Step.TLabel"
+            self.step_labels[index].configure(text=label, style=style)
 
     def _append_agent_system_welcome(self) -> None:
         self.agent_chat.configure(state="normal")
         self.agent_chat.insert(
             END,
-            "Ask me about your clips, setup, or posting strategy.\n",
+            f"{copy.ASSISTANT_WELCOME}\n",
             "system",
         )
         self.agent_chat.configure(state="disabled")
 
-    def _add_combobox(self, parent: ttk.Frame, label: str, variable: StringVar, values: list[str]) -> None:
+    def _add_combobox(self, parent: ttk.Frame, label: str, variable: StringVar, values: list[str] | dict[str, str]) -> None:
+        options = list(values.keys()) if isinstance(values, dict) else values
         frame = ttk.Frame(parent, style="Surface.TFrame")
         frame.pack(side=LEFT, padx=(0, 14))
         ttk.Label(frame, text=label, style="Muted.TLabel").pack(anchor=W)
-        ttk.Combobox(frame, textvariable=variable, values=values, width=12, state="readonly").pack(anchor=W)
+        ttk.Combobox(frame, textvariable=variable, values=options, width=14, state="readonly").pack(anchor=W)
 
     def _add_spinbox(self, parent: ttk.Frame, label: str, variable: StringVar, from_: int, to: int) -> None:
         frame = ttk.Frame(parent, style="Surface.TFrame")
@@ -377,7 +422,7 @@ class GameplayAutoEditorApp:
 
     def choose_video(self) -> None:
         path = filedialog.askopenfilename(
-            title="Choose gameplay video",
+            title=copy.BTN_SELECT_VIDEO,
             filetypes=[
                 ("Video files", "*.mp4 *.mov *.mkv *.webm *.avi"),
                 ("All files", "*.*"),
@@ -388,23 +433,25 @@ class GameplayAutoEditorApp:
 
         self.selected_video = Path(path)
         self.file_label.configure(text=self.selected_video.name)
-        self.status_var.set("Ready to generate clips.")
+        self.status_var.set(copy.STATUS_VIDEO_SELECTED)
+        self._set_workflow_step(2)
 
     def add_to_queue(self) -> None:
         if not self.selected_video:
-            messagebox.showinfo(APP_TITLE, "Choose a gameplay video first.")
+            messagebox.showinfo(APP_TITLE, copy.MSG_PICK_VIDEO_FIRST)
             return
         if self.selected_video in self.video_queue:
-            self.status_var.set("Video already in queue.")
+            self.status_var.set("That video is already in your batch.")
             return
         self.video_queue.append(self.selected_video)
         self._refresh_queue_list()
-        self.status_var.set(f"{len(self.video_queue)} video(s) queued.")
+        self.status_var.set(f"{len(self.video_queue)} video(s) ready in batch.")
+        self._set_workflow_step(2)
 
     def clear_queue(self) -> None:
         self.video_queue.clear()
         self._refresh_queue_list()
-        self.status_var.set("Queue cleared.")
+        self.status_var.set("Batch cleared.")
 
     def _refresh_queue_list(self) -> None:
         for item in self.queue_listbox.get_children():
@@ -415,14 +462,11 @@ class GameplayAutoEditorApp:
     def generate_clips(self) -> None:
         targets = list(self.video_queue) if self.video_queue else ([self.selected_video] if self.selected_video else [])
         if not targets:
-            messagebox.showinfo(APP_TITLE, "Choose a gameplay video first.")
+            messagebox.showinfo(APP_TITLE, copy.MSG_PICK_VIDEO_FIRST)
             return
 
         if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
-            messagebox.showerror(
-                APP_TITLE,
-                "FFmpeg is required but was not found. Install FFmpeg, then reopen the app.",
-            )
+            messagebox.showerror(APP_TITLE, copy.MSG_FFMPEG_MISSING)
             return
 
         try:
@@ -449,11 +493,12 @@ class GameplayAutoEditorApp:
             return
 
         settings = self._settings_override()
-        self.generate_button.configure(state="disabled")
+        self.generate_button.configure(state="disabled", text=copy.BTN_CREATING_CLIPS)
         self.batch_reports = []
-        self.status_var.set(f"Generating clips for {len(targets)} video(s)...")
+        self.status_var.set(copy.STATUS_CREATING)
+        self._set_workflow_step(2)
         self.progress_var.set(0.0)
-        self.stage_var.set("Starting clip generation...")
+        self.stage_var.set(copy.STATUS_CREATING)
         self.progress_text.delete("1.0", END)
         self._reset_results_panel()
 
@@ -518,9 +563,9 @@ class GameplayAutoEditorApp:
             ),
             encoding="utf-8",
         )
-        self.provider_var.set("openai")
+        self.provider_var.set(copy.DETECTION_VALUE_TO_LABEL.get("openai", "OpenAI vision"))
         self.openai_key_var.set("")
-        self.key_status_var.set("OpenAI key saved. Vision mode is set to openai.")
+        self.key_status_var.set("OpenAI key saved. Smart detection is ready.")
         self.status_var.set("API key saved.")
 
     def _poll_output_queue(self) -> None:
@@ -592,16 +637,17 @@ class GameplayAutoEditorApp:
         self.report = report
         self.agent_advisor.update_context(report=report, ui_settings=self._ui_settings_snapshot())
         self.agent_status_var.set(self._agent_status_text())
-        self.generate_button.configure(state="normal")
+        self.generate_button.configure(state="normal", text=copy.BTN_CREATE_CLIPS)
         clips_created = int(report.get("clips_created", 0))
         batch_count = int(report.get("batch_count", 0))
         self.progress_var.set(100.0)
         if batch_count > 1:
-            self.stage_var.set(f"Batch done. Processed {batch_count} video(s), created {clips_created} clip(s).")
-            self.status_var.set(f"Batch done. {batch_count} video(s), {clips_created} clip(s).")
+            self.stage_var.set(f"All done — {clips_created} clip(s) from {batch_count} video(s).")
+            self.status_var.set(copy.STATUS_DONE)
         else:
-            self.stage_var.set(f"Done. Created {clips_created} clip(s).")
-            self.status_var.set(f"Done. Created {clips_created} clip(s).")
+            self.stage_var.set(f"All done — {clips_created} clip(s) ready.")
+            self.status_var.set(copy.STATUS_DONE)
+        self._set_workflow_step(3)
         if clips_created == 0:
             reason = report.get("failure_reason")
             log_file = report.get("log_file", "")
@@ -613,11 +659,11 @@ class GameplayAutoEditorApp:
         self._show_results(report)
 
     def _generation_failed(self, error_text: str) -> None:
-        self.generate_button.configure(state="normal")
-        self.status_var.set("Generation failed.")
-        self.stage_var.set("Generation failed.")
+        self.generate_button.configure(state="normal", text=copy.BTN_CREATE_CLIPS)
+        self.status_var.set(copy.STATUS_FAILED)
+        self.stage_var.set(copy.STATUS_FAILED)
         self._append_progress(error_text)
-        messagebox.showerror(APP_TITLE, "Clip generation failed. See the progress box for details.")
+        messagebox.showerror(APP_TITLE, "Clip creation failed. See the activity log below for details.")
 
     def _resolve_clip_file(self, clip: dict, report: dict | None = None) -> Path | None:
         raw_path = clip.get("final_clip")
@@ -764,26 +810,26 @@ class GameplayAutoEditorApp:
 
             buttons = ttk.Frame(card, style="Elevated.TFrame")
             buttons.pack(fill="x", pady=(10, 0))
-            ttk.Button(buttons, text="Play", command=lambda p=final_clip: open_path(p)).pack(side=LEFT)
-            ttk.Button(buttons, text="Folder", style="Ghost.TButton", command=lambda p=final_clip: open_path(p.parent)).pack(
+            ttk.Button(buttons, text=copy.BTN_PLAY, command=lambda p=final_clip: open_path(p)).pack(side=LEFT)
+            ttk.Button(buttons, text=copy.BTN_FOLDER, style="Ghost.TButton", command=lambda p=final_clip: open_path(p.parent)).pack(
                 side=LEFT, padx=(6, 0)
             )
-            ttk.Button(buttons, text="Export", style="Ghost.TButton", command=lambda p=final_clip: export_clip(p)).pack(
+            ttk.Button(buttons, text=copy.BTN_SAVE_ONE, style="Ghost.TButton", command=lambda p=final_clip: export_clip(p)).pack(
                 side=LEFT, padx=(6, 0)
             )
-            ttk.Button(buttons, text="Caption", style="Ghost.TButton", command=lambda c=clip: self.copy_caption(c)).pack(
+            ttk.Button(buttons, text=copy.BTN_COPY_ONE, style="Ghost.TButton", command=lambda c=clip: self.copy_caption(c)).pack(
                 side=LEFT, padx=(6, 0)
             )
             ttk.Button(
                 buttons,
-                text="Social",
+                text=copy.BTN_COPY_SOCIAL,
                 style="Ghost.TButton",
                 command=lambda c=clip: self.copy_social_caption(c),
             ).pack(side=LEFT, padx=(6, 0))
             if self.social_manager.is_enabled():
                 post_row = ttk.Frame(card, style="Elevated.TFrame")
                 post_row.pack(fill="x", pady=(8, 0))
-                ttk.Label(post_row, text="Post", style="CardMuted.TLabel").pack(side=LEFT)
+                ttk.Label(post_row, text=copy.BTN_POST, style="CardMuted.TLabel").pack(side=LEFT)
                 for platform, label in (
                     ("youtube", "YouTube"),
                     ("tiktok", "TikTok"),
@@ -798,7 +844,7 @@ class GameplayAutoEditorApp:
             if clip.get("source_frame") and Path(str(clip.get("source_frame"))).exists():
                 ttk.Button(
                     buttons,
-                    text="Frame",
+                    text=copy.BTN_FRAME,
                     style="Ghost.TButton",
                     command=lambda c=clip: self.preview_frame(c),
                 ).pack(side=LEFT, padx=(6, 0))
@@ -967,13 +1013,28 @@ class GameplayAutoEditorApp:
 
     def _ui_settings_snapshot(self) -> dict[str, str]:
         return {
-            "vision_provider": self.provider_var.get(),
+            "vision_provider": self._provider_value(),
             "max_clips": self.max_clips_var.get(),
             "min_score": self.min_score_var.get(),
-            "platform_preset": self.platform_var.get(),
-            "game_profile": self.game_profile_var.get(),
-            "smart_reframe": self.smart_reframe_var.get(),
+            "platform_preset": self._platform_value(),
+            "game_profile": self._game_profile_value(),
+            "smart_reframe": self._smart_reframe_value(),
         }
+
+    def _provider_value(self) -> str:
+        return copy.DETECTION_LABEL_TO_VALUE.get(self.provider_var.get(), self.provider_var.get())
+
+    def _platform_value(self) -> str:
+        return copy.PLATFORM_LABEL_TO_VALUE.get(self.platform_var.get(), self.platform_var.get())
+
+    def _theme_value(self) -> str:
+        return copy.THEME_LABEL_TO_VALUE.get(self.theme_var.get(), self.theme_var.get())
+
+    def _game_profile_value(self) -> str:
+        return copy.GAME_LABEL_TO_VALUE.get(self.game_profile_var.get(), self.game_profile_var.get())
+
+    def _smart_reframe_value(self) -> str:
+        return copy.REFRAME_LABEL_TO_VALUE.get(self.smart_reframe_var.get(), self.smart_reframe_var.get())
 
     def _agent_tool_approval(self, tool_name: str, arguments: dict) -> bool:
         if tool_name == "suggest_settings":
@@ -992,7 +1053,7 @@ class GameplayAutoEditorApp:
             self.agent_chat.insert(END, "You\n", "user_label")
             self.agent_chat.insert(END, f"{content}\n", "user_body")
         else:
-            self.agent_chat.insert(END, "Copilot\n", "agent_label")
+            self.agent_chat.insert(END, f"{copy.ASSISTANT_TITLE}\n", "agent_label")
             self.agent_chat.insert(END, f"{content}\n", "agent_body")
         self.agent_chat.configure(state="disabled")
         self.agent_chat.see(END)
@@ -1062,31 +1123,38 @@ class GameplayAutoEditorApp:
 
     def _apply_agent_suggestions(self, suggestions: list[dict[str, str]]) -> None:
         mapping = {
-            "highlight_detection.min_score": ("min_score_var", str),
-            "highlight_detection.max_clips": ("max_clips_var", str),
-            "highlight_detection.game_profile": ("game_profile_var", str),
-            "vision.provider": ("provider_var", str),
-            "rendering.platform_preset": ("platform_var", str),
+            "highlight_detection.min_score": "min_score_var",
+            "highlight_detection.max_clips": "max_clips_var",
+            "highlight_detection.game_profile": "game_profile_var",
+            "vision.provider": "provider_var",
+            "rendering.platform_preset": "platform_var",
+        }
+        label_maps = {
+            "game_profile_var": copy.GAME_VALUE_TO_LABEL,
+            "provider_var": copy.DETECTION_VALUE_TO_LABEL,
+            "platform_var": copy.PLATFORM_VALUE_TO_LABEL,
         }
         applied = 0
         for suggestion in suggestions:
             setting = suggestion.get("setting", "")
             suggested = str(suggestion.get("suggested", "")).split("/")[0].strip()
-            attr = mapping.get(setting)
-            if not attr or not suggested:
+            var_name = mapping.get(setting)
+            if not var_name or not suggested:
                 continue
-            var_name, _ = attr
             var = getattr(self, var_name, None)
-            if var is not None:
-                var.set(suggested.split()[0])
-                applied += 1
-        self.status_var.set(f"Applied {applied} assistant suggestion(s) to UI controls.")
+            if var is None:
+                continue
+            value = suggested.split()[0]
+            label_map = label_maps.get(var_name)
+            var.set(label_map.get(value, value) if label_map else value)
+            applied += 1
+        self.status_var.set(f"Applied {applied} suggestion(s) from your assistant.")
 
     def copy_all_captions(self) -> None:
         report = self.report or {}
         clips = self._clips_for_display(report)
         if not clips:
-            messagebox.showinfo(APP_TITLE, "Generate clips first.")
+            messagebox.showinfo(APP_TITLE, copy.MSG_NO_CLIPS_YET)
             return
         lines = []
         for index, clip in enumerate(clips, start=1):
@@ -1098,13 +1166,13 @@ class GameplayAutoEditorApp:
             return
         self.root.clipboard_clear()
         self.root.clipboard_append("\n\n".join(lines))
-        self.status_var.set(f"Copied {len(lines)} caption(s).")
+        self.status_var.set(copy.MSG_CAPTIONS_COPIED)
 
     def export_all_clips(self) -> None:
         report = self.report or {}
         clips = self._clips_for_display(report)
         if not clips:
-            messagebox.showinfo(APP_TITLE, "Generate clips first.")
+            messagebox.showinfo(APP_TITLE, copy.MSG_NO_CLIPS_YET)
             return
 
         destination = filedialog.askdirectory(title="Choose export folder for all clips")
@@ -1154,8 +1222,9 @@ class GameplayAutoEditorApp:
         if show_placeholder:
             ttk.Label(
                 self.results_canvas,
-                text="Your generated clips will appear here.",
+                text=copy.SECTION_EMPTY_CLIPS,
                 style="Muted.TLabel",
+                wraplength=560,
             ).pack(anchor=W, padx=4, pady=8)
         self._refresh_results_canvas()
 
@@ -1169,21 +1238,21 @@ class GameplayAutoEditorApp:
     def _settings_override(self) -> dict:
         return {
             "vision": {
-                "provider": self.provider_var.get(),
+                "provider": self._provider_value(),
                 "analysis_interval_seconds": int(self.interval_var.get()),
                 "max_frames_to_analyze": int(self.max_frames_var.get()),
             },
             "rendering": {
-                "platform_preset": self.platform_var.get(),
-                "theme": self.theme_var.get(),
+                "platform_preset": self._platform_value(),
+                "theme": self._theme_value(),
                 "smart_reframe": {
-                    "enabled": self.smart_reframe_var.get() == "on",
+                    "enabled": self._smart_reframe_value() == "on",
                 },
             },
             "highlight_detection": {
                 "max_clips": int(self.max_clips_var.get()),
                 "min_score": int(self.min_score_var.get()),
-                "game_profile": self.game_profile_var.get(),
+                "game_profile": self._game_profile_value(),
             },
         }
 
@@ -1203,34 +1272,39 @@ class GameplayAutoEditorApp:
 
     def _initial_provider(self) -> str:
         try:
-            return str(load_config().get("vision", {}).get("provider", "heuristic"))
+            value = str(load_config().get("vision", {}).get("provider", "heuristic"))
         except Exception:  # noqa: BLE001
-            return "heuristic"
+            value = "heuristic"
+        return copy.DETECTION_VALUE_TO_LABEL.get(value, value)
 
     def _initial_platform_preset(self) -> str:
         try:
-            return str(load_config().get("rendering", {}).get("platform_preset", "tiktok"))
+            value = str(load_config().get("rendering", {}).get("platform_preset", "tiktok"))
         except Exception:  # noqa: BLE001
-            return "tiktok"
+            value = "tiktok"
+        return copy.PLATFORM_VALUE_TO_LABEL.get(value, value)
 
     def _initial_theme(self) -> str:
         try:
-            return str(load_config().get("rendering", {}).get("theme", "default"))
+            value = str(load_config().get("rendering", {}).get("theme", "default"))
         except Exception:  # noqa: BLE001
-            return "default"
+            value = "default"
+        return copy.THEME_VALUE_TO_LABEL.get(value, value)
 
     def _initial_game_profile(self) -> str:
         try:
-            return str(load_config().get("highlight_detection", {}).get("game_profile", "generic"))
+            value = str(load_config().get("highlight_detection", {}).get("game_profile", "generic"))
         except Exception:  # noqa: BLE001
-            return "generic"
+            value = "generic"
+        return copy.GAME_VALUE_TO_LABEL.get(value, value)
 
     def _initial_smart_reframe(self) -> str:
         try:
             enabled = bool(load_config().get("rendering", {}).get("smart_reframe", {}).get("enabled", False))
-            return "on" if enabled else "off"
+            value = "on" if enabled else "off"
         except Exception:  # noqa: BLE001
-            return "off"
+            value = "off"
+        return copy.REFRAME_VALUE_TO_LABEL.get(value, value)
 
     def _api_key_status(self) -> str:
         try:

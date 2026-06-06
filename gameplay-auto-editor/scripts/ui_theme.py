@@ -10,29 +10,32 @@ from tkinter import ttk
 class AppTheme:
     """Centralized palette and ttk style configuration."""
 
-    BG = "#0c0e14"
-    SURFACE = "#141820"
-    SURFACE_ELEVATED = "#1c2230"
-    SURFACE_HOVER = "#252d3d"
-    BORDER = "#2a3347"
-    TEXT = "#eef0f6"
-    TEXT_MUTED = "#8b93a8"
-    TEXT_DIM = "#5c6478"
-    ACCENT = "#7c5cff"
-    ACCENT_SOFT = "#2a2248"
-    ACCENT_GLOW = "#9d84ff"
-    SUCCESS = "#2dd4a8"
-    WARNING = "#f5b942"
-    DANGER = "#f07178"
-    INPUT_BG = "#10141c"
+    BG = "#0f1117"
+    SURFACE = "#171b24"
+    SURFACE_ELEVATED = "#1f2533"
+    SURFACE_HOVER = "#2a3142"
+    BORDER = "#323a4d"
+    TEXT = "#f2f4f8"
+    TEXT_MUTED = "#9aa3b8"
+    TEXT_DIM = "#6b7288"
+    ACCENT = "#6d5efc"
+    ACCENT_SOFT = "#2a2650"
+    ACCENT_GLOW = "#8b7dff"
+    SUCCESS = "#34d399"
+    WARNING = "#fbbf24"
+    DANGER = "#f87171"
+    INPUT_BG = "#12161f"
+    HERO_GRADIENT = "#1a2030"
 
     FONT_UI = ("Segoe UI", 10) if sys.platform.startswith("win") else ("Helvetica Neue", 10)
     FONT_UI_BOLD = ("Segoe UI", 10, "bold") if sys.platform.startswith("win") else ("Helvetica Neue", 10, "bold")
-    FONT_TITLE = ("Segoe UI Semibold", 22, "bold") if sys.platform.startswith("win") else ("Helvetica Neue", 22, "bold")
+    FONT_TITLE = ("Segoe UI Semibold", 20, "bold") if sys.platform.startswith("win") else ("Helvetica Neue", 20, "bold")
+    FONT_HERO = ("Segoe UI Semibold", 15, "bold") if sys.platform.startswith("win") else ("Helvetica Neue", 15, "bold")
     FONT_SUBTITLE = ("Segoe UI", 10) if sys.platform.startswith("win") else ("Helvetica Neue", 10)
     FONT_SMALL = ("Segoe UI", 9) if sys.platform.startswith("win") else ("Helvetica Neue", 9)
     FONT_MONO = ("Consolas", 9) if sys.platform.startswith("win") else ("DejaVu Sans Mono", 9)
     FONT_CHIP = ("Segoe UI", 8) if sys.platform.startswith("win") else ("Helvetica Neue", 8)
+    FONT_STEP = ("Segoe UI", 9, "bold") if sys.platform.startswith("win") else ("Helvetica Neue", 9, "bold")
 
     @classmethod
     def apply(cls, root: tk.Tk) -> ttk.Style:
@@ -47,10 +50,17 @@ class AppTheme:
         style.configure("TFrame", background=cls.BG)
         style.configure("Surface.TFrame", background=cls.SURFACE)
         style.configure("Elevated.TFrame", background=cls.SURFACE_ELEVATED)
+        style.configure("Hero.TFrame", background=cls.HERO_GRADIENT)
+        style.configure("Steps.TFrame", background=cls.SURFACE)
         style.configure("Copilot.TFrame", background=cls.SURFACE_ELEVATED)
+
         style.configure("TLabel", background=cls.BG, foreground=cls.TEXT, font=cls.FONT_UI)
         style.configure("Muted.TLabel", background=cls.BG, foreground=cls.TEXT_MUTED, font=cls.FONT_SMALL)
         style.configure("Surface.TLabel", background=cls.SURFACE, foreground=cls.TEXT, font=cls.FONT_UI)
+        style.configure("Hero.TLabel", background=cls.HERO_GRADIENT, foreground=cls.TEXT, font=cls.FONT_HERO)
+        style.configure("HeroMuted.TLabel", background=cls.HERO_GRADIENT, foreground=cls.TEXT_MUTED, font=cls.FONT_SUBTITLE)
+        style.configure("Step.TLabel", background=cls.SURFACE, foreground=cls.TEXT_DIM, font=cls.FONT_STEP)
+        style.configure("StepActive.TLabel", background=cls.SURFACE, foreground=cls.ACCENT_GLOW, font=cls.FONT_STEP)
         style.configure("Copilot.TLabel", background=cls.SURFACE_ELEVATED, foreground=cls.TEXT, font=cls.FONT_UI)
         style.configure(
             "CopilotMuted.TLabel",
@@ -62,6 +72,7 @@ class AppTheme:
         style.configure("Subtitle.TLabel", background=cls.BG, foreground=cls.TEXT_MUTED, font=cls.FONT_SUBTITLE)
         style.configure("CardTitle.TLabel", background=cls.SURFACE_ELEVATED, foreground=cls.TEXT, font=cls.FONT_UI_BOLD)
         style.configure("CardMuted.TLabel", background=cls.SURFACE_ELEVATED, foreground=cls.TEXT_MUTED, font=cls.FONT_SMALL)
+        style.configure("HeroCardMuted.TLabel", background=cls.HERO_GRADIENT, foreground=cls.TEXT_MUTED, font=cls.FONT_SMALL)
 
         style.configure(
             "TButton",
@@ -83,7 +94,7 @@ class AppTheme:
             foreground="#ffffff",
             borderwidth=0,
             focusthickness=0,
-            padding=(16, 9),
+            padding=(18, 10),
             font=cls.FONT_UI_BOLD,
         )
         style.map(
@@ -150,7 +161,7 @@ class AppTheme:
             bordercolor=cls.BORDER,
             lightcolor=cls.ACCENT,
             darkcolor=cls.ACCENT,
-            thickness=8,
+            thickness=6,
         )
         style.configure(
             "TLabelframe",
