@@ -1,4 +1,4 @@
-"""Turn frame-level analysis into clip ranges."""
+"""Turn microclip/frame analyses into weighted highlight clip ranges."""
 
 from __future__ import annotations
 
@@ -7,70 +7,82 @@ from typing import Iterable, List
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_WEIGHTS = {
+    "ai_weight": 0.6,
+    "motion_weight": 0.1,
+    "audio_weight": 0.1,
+    "hitmarker_bonus": 20.0,
+    "killfeed_bonus": 40.0,
+    "low_health_bonus": 15.0,
+    "min_final_score": 60.0,
+}
+
 
 def detect_highlights(analyses: Iterable[dict], video_duration: float, config: dict) -> List[dict]:
-    """Select and merge highlight-worthy moments from analyzed frames."""
+    """Select highlight moments using weighted scoring and timestamp smoothing."""
     analyses = sorted(analyses, key=lambda item: float(item.get("timestamp", 0)))
     if not analyses:
-        logger.warning("[HighlightDetector] No frame analyses available — cannot detect highlights.")
+        logger.warning("[HighlightDetector] No analyses available — cannot detect highlights.")
         return []
 
-    min_score = float(config.get("min_score", 25))
+    weights = {**DEFAULT_WEIGHTS, **config.get("weighted_scoring", {})}
+    smoothing = config.get("timestamp_smoothing", {})
+    merge_seconds = float(smoothing.get("merge_seconds", config.get("merge_distance_seconds", 2)))
+    start_padding = float(smoothing.get("start_padding", 0.5))
+    end_padding = float(smoothing.get("end_padding", 1.0))
     max_clips = int(config.get("max_clips", 5))
-    merge_distance = float(config.get("merge_distance_seconds", 6))
-    always_pick_best = bool(config.get("always_pick_best_frame", True))
     min_clip_seconds = float(config.get("min_clip_seconds", 3))
     max_clip_seconds = float(config.get("max_clip_seconds", 60))
+    before = float(config.get("clip_seconds_before", 4))
+    after = float(config.get("clip_seconds_after", 8))
+    always_pick_best = bool(config.get("always_pick_best_frame", True))
+    min_final_score = float(weights["min_final_score"])
 
-    ranked = sorted(analyses, key=lambda item: _effective_score(item), reverse=True)
-    peak_score = _effective_score(ranked[0])
-    adaptive_threshold = min(min_score, max(15.0, peak_score * 0.55))
-
-    logger.info("[HighlightDetector] Applying min_score threshold: %.2f", min_score)
-    logger.info("[HighlightDetector] Adaptive threshold (relative to peak %.2f): %.2f", peak_score, adaptive_threshold)
-    logger.info("[HighlightDetector] Raw frame scores:")
+    scored: list[dict] = []
     for item in analyses:
-        logger.info(
-            "[HighlightDetector]   t=%.2fs raw=%.2f effective=%.2f categories=%s",
-            float(item.get("timestamp", 0)),
-            float(item.get("viral_score", 0)),
-            _effective_score(item),
-            item.get("categories", []),
-        )
+        breakdown = compute_weighted_score(item, weights)
+        enriched = dict(item)
+        enriched["score_breakdown"] = breakdown
+        enriched["final_score"] = breakdown["final_score"]
+        enriched["viral_score"] = breakdown["ai_score"]
+        scored.append(enriched)
+        _log_sample_scores(item, breakdown)
 
-    candidates = [item for item in analyses if _effective_score(item) >= adaptive_threshold]
-    selection_mode = "threshold"
+    ranked = sorted(scored, key=lambda item: float(item.get("final_score", 0)), reverse=True)
+    candidates = [item for item in ranked if float(item.get("final_score", 0)) >= min_final_score]
+    selection_mode = "weighted_threshold"
 
     if not candidates and always_pick_best:
         logger.warning(
-            "[HighlightDetector] No frames met adaptive threshold %.2f — selecting top moments by score.",
-            adaptive_threshold,
+            "[HighlightDetector] No samples met final score %.1f — selecting top weighted moments.",
+            min_final_score,
         )
-        candidates = _pick_spaced_top_frames(ranked, max_clips, merge_distance)
-        selection_mode = "top_by_score"
+        candidates = _pick_spaced_top_samples(ranked, max_clips, merge_seconds)
+        selection_mode = "weighted_fallback"
 
     if not candidates:
-        logger.warning("[HighlightDetector] No candidates found — using strongest single frame.")
         candidates = [ranked[0]]
         selection_mode = "fallback_single"
 
-    merged = _merge_close_candidates(candidates, merge_distance)
-    selected = sorted(merged, key=lambda item: _effective_score(item), reverse=True)[:max_clips]
+    merged = _merge_close_candidates(candidates, merge_seconds)
+    selected = sorted(merged, key=lambda item: float(item.get("final_score", 0)), reverse=True)[:max_clips]
 
-    highlights = []
-    before = float(config.get("clip_seconds_before", 4))
-    after = float(config.get("clip_seconds_after", 8))
-
+    highlights: list[dict] = []
     for index, candidate in enumerate(sorted(selected, key=lambda item: float(item.get("timestamp", 0))), start=1):
         timestamp = float(candidate.get("timestamp", 0))
         start = max(0.0, timestamp - before)
         end = min(float(video_duration), timestamp + after) if video_duration > 0 else timestamp + after
+        start = max(0.0, start - start_padding)
+        if video_duration > 0:
+            end = min(float(video_duration), end + end_padding)
+        else:
+            end = end + end_padding
+
         if end <= start:
             end = start + min_clip_seconds
-        duration = end - start
-        if duration < min_clip_seconds:
+        if end - start < min_clip_seconds:
             end = min(float(video_duration) if video_duration > 0 else start + min_clip_seconds, start + min_clip_seconds)
-        if duration > max_clip_seconds:
+        if end - start > max_clip_seconds:
             end = start + max_clip_seconds
 
         highlights.append(
@@ -80,12 +92,14 @@ def detect_highlights(analyses: Iterable[dict], video_duration: float, config: d
                 "start": round(start, 2),
                 "end": round(end, 2),
                 "duration": round(end - start, 2),
-                "score": round(_effective_score(candidate), 2),
+                "score": round(float(candidate.get("final_score", 0)), 2),
                 "categories": candidate.get("categories", []),
                 "summary": candidate.get("summary", "Gameplay highlight."),
                 "reason": candidate.get("reason", ""),
                 "scores": candidate.get("scores", {}),
-                "source_frame": candidate.get("frame_path"),
+                "score_breakdown": candidate.get("score_breakdown", {}),
+                "source_frame": candidate.get("poster_frame_path") or candidate.get("frame_path"),
+                "source_clip": candidate.get("clip_path"),
                 "selection_mode": selection_mode,
                 "raw_analysis": candidate,
             }
@@ -94,7 +108,7 @@ def detect_highlights(analyses: Iterable[dict], video_duration: float, config: d
     logger.info("[HighlightDetector] Accepted %s highlight(s) via %s:", len(highlights), selection_mode)
     for highlight in highlights:
         logger.info(
-            "[HighlightDetector]   %s t=%.2fs score=%.2f range=%.2fs-%.2fs",
+            "[HighlightDetector] Final highlight %s t=%.2fs score=%.2f range=%.2fs-%.2fs",
             highlight["id"],
             highlight["timestamp"],
             highlight["score"],
@@ -105,16 +119,66 @@ def detect_highlights(analyses: Iterable[dict], video_duration: float, config: d
     return highlights
 
 
-def _effective_score(item: dict) -> float:
-    """Blend absolute and relative scores so heuristic batches still rank usefully."""
-    raw = float(item.get("viral_score", 0))
-    motion = float((item.get("signals") or {}).get("motion_score", item.get("motion_score", 0)))
-    motion_boost = min(35.0, motion * 1.2)
-    return round(max(raw, motion_boost), 2)
+def compute_weighted_score(analysis: dict, weights: dict | None = None) -> dict:
+    """Combine AI and optional gameplay signals into a final 0–100+ score."""
+    cfg = {**DEFAULT_WEIGHTS, **(weights or {})}
+    signals = analysis.get("gameplay_signals") or analysis.get("signals") or {}
+
+    ai_score = float(analysis.get("viral_score", analysis.get("ai_score", 0)))
+    motion_raw = float(signals.get("motion_intensity", analysis.get("motion_score", 0)))
+    audio_raw = float(signals.get("audio_spike_score", 0))
+    motion_score_0_20 = min(20.0, motion_raw * 0.2)
+    audio_score_0_20 = min(20.0, audio_raw)
+
+    hitmarker = bool(signals.get("hitmarker_detected", False))
+    killfeed = bool(signals.get("killfeed_ocr_match", False))
+    low_health = bool(signals.get("low_health_detected", False))
+
+    bonus = 0.0
+    if hitmarker:
+        bonus += float(cfg["hitmarker_bonus"])
+    if killfeed:
+        bonus += float(cfg["killfeed_bonus"])
+    if low_health:
+        bonus += float(cfg["low_health_bonus"])
+
+    final_score = (
+        ai_score * float(cfg["ai_weight"])
+        + motion_score_0_20 * float(cfg["motion_weight"])
+        + audio_score_0_20 * float(cfg["audio_weight"])
+        + bonus
+    )
+
+    return {
+        "ai_score": round(ai_score, 2),
+        "motion_component": round(motion_score_0_20, 2),
+        "audio_component": round(audio_score_0_20, 2),
+        "hitmarker_detected": hitmarker,
+        "killfeed_ocr_match": killfeed,
+        "low_health_detected": low_health,
+        "bonus_points": round(bonus, 2),
+        "final_score": round(final_score, 2),
+    }
 
 
-def _pick_spaced_top_frames(ranked: List[dict], max_clips: int, merge_distance: float) -> List[dict]:
-    """Pick the highest-scoring frames that are spaced apart in time."""
+def _log_sample_scores(item: dict, breakdown: dict) -> None:
+    signals = item.get("gameplay_signals") or {}
+    logger.info(
+        "[HighlightDetector] t=%.2fs ai=%.1f motion=%.1f audio=%.1f hitmarker=%s killfeed=%s low_health=%s final=%.1f",
+        float(item.get("timestamp", 0)),
+        breakdown["ai_score"],
+        breakdown["motion_component"],
+        breakdown["audio_component"],
+        breakdown["hitmarker_detected"],
+        breakdown["killfeed_ocr_match"],
+        breakdown["low_health_detected"],
+        breakdown["final_score"],
+    )
+    if signals.get("killfeed_ocr_text"):
+        logger.info("[HighlightDetector]   killfeed OCR: %s", signals["killfeed_ocr_text"])
+
+
+def _pick_spaced_top_samples(ranked: List[dict], max_clips: int, merge_distance: float) -> List[dict]:
     chosen: list[dict] = []
     for candidate in ranked:
         timestamp = float(candidate.get("timestamp", 0))
@@ -138,7 +202,7 @@ def _merge_close_candidates(candidates: List[dict], merge_distance: float) -> Li
         previous = merged[-1]
         time_gap = float(candidate.get("timestamp", 0)) - float(previous.get("timestamp", 0))
         if time_gap <= merge_distance:
-            if _effective_score(candidate) > _effective_score(previous):
+            if float(candidate.get("final_score", 0)) > float(previous.get("final_score", 0)):
                 merged[-1] = _combine_candidates(candidate, previous)
             else:
                 merged[-1] = _combine_candidates(previous, candidate)

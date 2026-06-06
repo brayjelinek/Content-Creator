@@ -6,19 +6,39 @@
     "anthropic_api_key": "",
     "anthropic_model": "claude-3-5-haiku-latest",
     "analysis_interval_seconds": 3,
-    "max_frames_to_analyze": 10,
+    "max_frames_to_analyze": 60,
     "request_timeout_seconds": 60,
-    "jpeg_quality": 85
+    "jpeg_quality": 85,
+    "microclip_sampling": {
+      "enabled": true,
+      "interval_seconds": 1.0,
+      "duration_seconds": 1.5,
+      "max_samples": 60
+    }
   },
   "highlight_detection": {
     "max_clips": 5,
-    "min_score": 25,
+    "min_score": 60,
     "always_pick_best_frame": true,
     "min_clip_seconds": 3,
     "max_clip_seconds": 60,
     "clip_seconds_before": 4,
     "clip_seconds_after": 8,
-    "merge_distance_seconds": 6
+    "merge_distance_seconds": 2,
+    "weighted_scoring": {
+      "ai_weight": 0.6,
+      "motion_weight": 0.1,
+      "audio_weight": 0.1,
+      "hitmarker_bonus": 20,
+      "killfeed_bonus": 40,
+      "low_health_bonus": 15,
+      "min_final_score": 60
+    },
+    "timestamp_smoothing": {
+      "merge_seconds": 2,
+      "start_padding": 0.5,
+      "end_padding": 1.0
+    }
   },
   "rendering": {
     "width": 1080,

@@ -18,6 +18,7 @@ from scripts.clip_cutter import get_video_duration, process_highlights
 from scripts.frame_extractor import extract_frames
 from scripts.highlight_detector import detect_highlights
 from scripts.logging_utils import setup_pipeline_logging
+from scripts.microclip_sampler import extract_microclips
 from scripts.vision_analyzer import VisionAnalyzer
 
 logger = logging.getLogger(__name__)
@@ -76,27 +77,28 @@ def run_pipeline(
 
     vision_config = config.get("vision", {})
     render_config = config.get("rendering", {})
+    microclip_config = vision_config.get("microclip_sampling", {})
 
-    logger.info("[Pipeline] Extracting frames...")
-    frame_samples = extract_frames(
-        input_video,
-        frame_dir,
-        interval_seconds=float(vision_config.get("analysis_interval_seconds", 3)),
-        max_frames=int(vision_config.get("max_frames_to_analyze", 24)),
-        jpeg_quality=int(vision_config.get("jpeg_quality", 85)),
+    samples = _extract_analysis_samples(
+        input_video=input_video,
+        frame_dir=frame_dir,
+        vision_config=vision_config,
+        microclip_config=microclip_config,
     )
-    if not frame_samples:
-        logger.error("[Pipeline] No frames extracted — check that the input is a valid video file.")
-        raise RuntimeError("No frames were extracted. Check that the input is a valid video file.")
-    logger.info("[Pipeline] Extracted %s frame sample(s) from %s", len(frame_samples), input_video.name)
+    if not samples:
+        logger.error("[Pipeline] No samples extracted — check that the input is a valid video file.")
+        raise RuntimeError("No samples were extracted. Check that the input is a valid video file.")
+
+    sample_label = "microclip" if samples[0].get("clip_path") else "frame"
+    logger.info("[Pipeline] Extracted %s %s sample(s) from %s", len(samples), sample_label, input_video.name)
 
     provider = vision_config.get("provider", "heuristic")
     if provider == "heuristic":
         logger.info("[Pipeline] Running heuristic analysis...")
     else:
-        logger.info("[Pipeline] Running %s analysis on %s frame(s)...", provider, len(frame_samples))
+        logger.info("[Pipeline] Running %s analysis on %s %s sample(s)...", provider, len(samples), sample_label)
     analyzer = VisionAnalyzer(vision_config)
-    analyses = analyzer.analyze_frames(frame_samples)
+    analyses = analyzer.analyze_samples(samples)
     _write_json(report_dir / f"{video_stem}_analysis.json", analyses)
 
     duration = get_video_duration(input_video)
@@ -109,7 +111,8 @@ def run_pipeline(
         report = {
             "input_video": str(input_video),
             "duration_seconds": round(duration, 2),
-            "frames_analyzed": len(frame_samples),
+            "frames_analyzed": len(samples),
+            "samples_analyzed": len(samples),
             "highlights_detected": 0,
             "clips_created": 0,
             "clips": [],
@@ -173,7 +176,8 @@ def run_pipeline(
     report = {
         "input_video": str(input_video),
         "duration_seconds": round(duration, 2),
-        "frames_analyzed": len(frame_samples),
+        "frames_analyzed": len(samples),
+        "samples_analyzed": len(samples),
         "highlights_detected": len(highlights),
         "clips_created": len(rendered),
         "clips": rendered,
@@ -182,6 +186,45 @@ def run_pipeline(
     }
     _write_json(report_dir / f"{video_stem}_run_report.json", report)
     return report
+
+
+def _extract_analysis_samples(
+    *,
+    input_video: Path,
+    frame_dir: Path,
+    vision_config: dict,
+    microclip_config: dict,
+) -> list[dict]:
+    """Extract microclips by default, with safe fallback to legacy frame sampling."""
+    use_microclips = bool(microclip_config.get("enabled", True))
+    jpeg_quality = int(vision_config.get("jpeg_quality", 85))
+
+    if use_microclips:
+        try:
+            logger.info("[Pipeline] Extracting microclips...")
+            microclip_dir = frame_dir.parent / "microclips" / frame_dir.name
+            samples = extract_microclips(
+                input_video,
+                microclip_dir,
+                interval_seconds=float(microclip_config.get("interval_seconds", 1.0)),
+                clip_duration=float(microclip_config.get("duration_seconds", 1.5)),
+                max_samples=int(microclip_config.get("max_samples", vision_config.get("max_frames_to_analyze", 60))),
+                jpeg_quality=jpeg_quality,
+            )
+            if samples:
+                return samples
+            logger.warning("[Pipeline] Microclip sampling returned zero samples — falling back to frames.")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[Pipeline] Microclip sampling failed — falling back to frames: %s", exc)
+
+    logger.info("[Pipeline] Extracting frames...")
+    return extract_frames(
+        input_video,
+        frame_dir,
+        interval_seconds=float(vision_config.get("analysis_interval_seconds", 3)),
+        max_frames=int(vision_config.get("max_frames_to_analyze", 24)),
+        jpeg_quality=jpeg_quality,
+    )
 
 
 def load_config(config_path: str | Path | None = None) -> Dict[str, Any]:
