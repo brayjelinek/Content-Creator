@@ -107,6 +107,21 @@ class GameplayAutoEditorApp:
         self._poll_output_queue()
         self._refresh_social_status()
         self.agent_advisor.update_context(ui_settings=self._ui_settings_snapshot())
+        self.root.after_idle(self._finalize_card_layout)
+        self.root.after(150, self._finalize_card_layout)
+
+    def _finalize_card_layout(self) -> None:
+        """Re-measure cards after all child widgets are attached."""
+        from scripts.ui_components import SectionCard
+
+        def walk(widget: tk.Misc) -> None:
+            if isinstance(widget, SectionCard):
+                widget._sync_content_size()
+            for child in widget.winfo_children():
+                walk(child)
+
+        walk(self.root)
+        self.root.update_idletasks()
 
     def _build_ui(self) -> None:
         shell = ttk.Frame(self.root, padding=(AppTheme.SPACING_LG, AppTheme.SPACING_MD))

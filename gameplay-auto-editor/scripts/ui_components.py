@@ -62,6 +62,7 @@ class SectionCard(tk.Frame):
             "strong": self.tokens.shadow.strong,
         }
         self._shadow_color = shadow_map.get(shadow, self.tokens.shadow.medium)
+        self._min_height = min_height or 0
 
         super().__init__(master, bg=self.tokens.color.background)
 
@@ -73,7 +74,6 @@ class SectionCard(tk.Frame):
             highlightthickness=0,
             bd=0,
             bg=self.tokens.color.background,
-            height=min_height or 0,
         )
         self.canvas.pack(fill=BOTH, expand=True)
 
@@ -87,7 +87,23 @@ class SectionCard(tk.Frame):
                 anchor=W, pady=(self.tokens.space.xs, self.tokens.space.sm)
             )
 
+        self.content.bind("<Configure>", self._sync_content_size)
+        self.bind("<Map>", self._sync_content_size)
         self.canvas.bind("<Configure>", self._redraw)
+
+    def _sync_content_size(self, event: tk.Event | None = None) -> None:
+        """Grow the canvas to fit embedded content."""
+        self.content.update_idletasks()
+        if self._min_height:
+            target_height = self._min_height
+        else:
+            content_height = max(int(self.content.winfo_reqheight()), 1)
+            target_height = content_height + (self._padding * 2) + 6
+        self.canvas.configure(height=target_height)
+        canvas_width = max(self.canvas.winfo_width(), self.content.winfo_reqwidth() + (self._padding * 2) + 4, 80)
+        inner_width = max(canvas_width - (self._padding * 2) - 4, 80)
+        self.canvas.itemconfigure(self._window, width=inner_width)
+        self._redraw()
 
     def _redraw(self, event: tk.Event | None = None) -> None:
         width = max(self.canvas.winfo_width(), 10)
@@ -98,6 +114,7 @@ class SectionCard(tk.Frame):
         self.canvas.tag_lower("card")
         inner_width = max(width - (self._padding * 2) - 4, 80)
         self.canvas.itemconfigure(self._window, width=inner_width)
+        self.canvas.tag_raise(self._window)
 
     def _round_rect(self, x1: int, y1: int, x2: int, y2: int, radius: int, **kwargs) -> None:
         radius = max(1, min(radius, (x2 - x1) // 2, (y2 - y1) // 2))
@@ -139,7 +156,7 @@ class ClipsPanel(tk.Frame):
         self.card.pack(fill=BOTH, expand=True)
 
         scroll_wrap = ttk.Frame(self.card.content, style="CardSurface.TFrame")
-        scroll_wrap.pack(fill=BOTH, expand=True)
+        scroll_wrap.pack(fill="x")
 
         self.canvas = tk.Canvas(
             scroll_wrap,
@@ -294,7 +311,7 @@ class SmoothProgressAnimator:
 
 class StepStrip(tk.Frame):
     def __init__(self, master: tk.Misc, steps: list[str]):
-        super().__init__(master, bg=DS.color.background)
+        super().__init__(master, bg=DS.color.surface_elevated)
         self.labels: list[ttk.Label] = []
         for index, label in enumerate(steps):
             style = "StepActive.TLabel" if index == 0 else "Step.TLabel"
