@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import random
 from typing import Iterable, List
 
 from scripts.text_utils import looks_like_uuid, sanitize_overlay_text, wrap_overlay_text
@@ -19,6 +20,26 @@ CATEGORY_HOOKS = {
     "emotional reactions": "The reaction says it all",
     "setup moment": "Wait for it",
 }
+
+VIRAL_HOOKS = (
+    "Watch this...",
+    "No way this happened",
+    "Insane moment",
+    "This was wild",
+)
+
+IMPACT_BY_CATEGORY = {
+    "kills": ("HEADSHOT", "ELIMINATED", "INSANE"),
+    "deaths": ("NO WAY", "RIP", "INSTANT"),
+    "clutch plays": ("CLUTCH", "INSANE", "NO WAY"),
+    "explosions": ("BOOM", "INSANE", "WILD"),
+    "funny moments": ("LOL", "NO WAY", "WILD"),
+    "fails": ("FAIL", "NO WAY", "RIP"),
+    "high-action sequences": ("INSANE", "CHAOS", "WILD"),
+    "fast movement or chaos": ("CHAOS", "INSANE", "WILD"),
+}
+
+DEFAULT_IMPACT_TEXTS = ("INSANE", "CLUTCH", "NO WAY", "HEADSHOT", "DOUBLE KILL")
 
 DEFAULT_HASHTAGS = "#gaming #highlights #shorts #clips"
 
@@ -42,7 +63,8 @@ def generate_captions(
     for highlight in highlights:
         categories = [str(category) for category in highlight.get("categories", [])]
         score = float(highlight.get("score", 0))
-        hook = sanitize_overlay_text(_pick_hook(categories, score))
+        hook = sanitize_overlay_text(_pick_hook(categories, score, highlight))
+        impact_text = sanitize_overlay_text(_pick_impact_text(highlight, categories))
         overlay_body = sanitize_overlay_text(_overlay_caption_text(highlight, score))
         social_body = sanitize_overlay_text(_social_caption_text(highlight, display_name, score))
 
@@ -59,6 +81,7 @@ def generate_captions(
 
         updated = dict(highlight)
         updated["hook_text"] = hook
+        updated["impact_text"] = impact_text
         updated["caption_text"] = " ".join(caption_lines)
         updated["caption_lines"] = caption_lines
         updated["social_caption"] = social_body
@@ -68,7 +91,16 @@ def generate_captions(
     return captioned
 
 
-def _pick_hook(categories: list[str], score: float) -> str:
+def _pick_hook(categories: list[str], score: float, highlight: dict) -> str:
+    custom_hook = str(highlight.get("custom_hook_text") or "").strip()
+    if custom_hook:
+        return custom_hook
+
+    rng = random.Random(int(float(highlight.get("timestamp", 0)) * 1000) + int(score))
+    if score >= 60 or not categories or categories == ["setup moment"]:
+        if rng.random() >= 0.35:
+            return rng.choice(VIRAL_HOOKS)
+
     for category in categories:
         normalized = category.lower()
         if normalized in CATEGORY_HOOKS:
@@ -78,7 +110,41 @@ def _pick_hook(categories: list[str], score: float) -> str:
         return "This clip is wild"
     if score >= 65:
         return "Underrated gameplay moment"
-    return "Wait for it"
+    return rng.choice(VIRAL_HOOKS)
+
+
+def _pick_impact_text(highlight: dict, categories: list[str]) -> str:
+    custom_impact = str(highlight.get("custom_impact_text") or "").strip()
+    if custom_impact:
+        return custom_impact.upper()
+
+    raw = highlight.get("raw_analysis") or {}
+    signals = raw.get("gameplay_signals") or {}
+    breakdown = highlight.get("score_breakdown") or {}
+    rng = random.Random(int(float(highlight.get("timestamp", 0)) * 1000) + 17)
+
+    killfeed_keyword = signals.get("killfeed_ocr_keyword") or ""
+    if killfeed_keyword:
+        keyword = str(killfeed_keyword).upper()
+        if "double" in keyword.lower():
+            return "DOUBLE KILL"
+        if "headshot" in keyword.lower():
+            return "HEADSHOT"
+        return keyword[:18]
+
+    if breakdown.get("killfeed_ocr_match") or signals.get("killfeed_ocr_match"):
+        return "DOUBLE KILL"
+    if breakdown.get("hitmarker_detected") or signals.get("hitmarker_detected"):
+        return "HEADSHOT"
+    if breakdown.get("low_health_detected") or signals.get("low_health_detected"):
+        return "CLUTCH"
+
+    for category in categories:
+        options = IMPACT_BY_CATEGORY.get(category.lower())
+        if options:
+            return rng.choice(options)
+
+    return rng.choice(DEFAULT_IMPACT_TEXTS)
 
 
 def _overlay_caption_text(highlight: dict, score: float) -> str:

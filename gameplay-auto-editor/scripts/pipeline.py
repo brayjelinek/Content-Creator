@@ -33,6 +33,8 @@ from scripts.ui_events import (
     emit_ui_notice,
     resolve_clip_paths,
 )
+from scripts.moment_validator import enrich_highlight_validation
+from scripts.viral_clip_enhancer import enhance_rendered_clip
 from scripts.vision_analyzer import VisionAnalyzer
 
 logger = logging.getLogger(__name__)
@@ -158,6 +160,8 @@ def run_pipeline(
     )
     highlight_config = config.get("highlight_detection", {})
     highlights = detect_highlights(analyses, duration, highlight_config)
+    viral_cfg = render_config.get("viral_enhancements", {})
+    highlights = [enrich_highlight_validation(highlight, viral_cfg) for highlight in highlights]
     highlights = _ensure_minimum_highlights(highlights, analyses, samples, duration, highlight_config)
     logger.info("[Pipeline] Highlights detected: %s", len(highlights))
     emit_highlights_detected(progress_callback, count=len(highlights), percent=55)
@@ -233,6 +237,12 @@ def run_pipeline(
             clip["final_clip"],
             clip.get("score"),
         )
+        try:
+            enhanced = enhance_rendered_clip(clip["final_clip"], clip, render_config)
+            if enhanced:
+                clip["viral_enhanced"] = True
+        except Exception as exc:  # noqa: BLE001 - enhancement must never break pipeline
+            logger.warning("[Enhancer] Skipped enhancement for %s: %s", clip.get("id"), exc)
 
     emit_progress(
         progress_callback,
