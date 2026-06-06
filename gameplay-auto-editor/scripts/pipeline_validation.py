@@ -12,6 +12,21 @@ from scripts.text_utils import validate_filter_chain
 logger = logging.getLogger(__name__)
 
 
+def validate_ffmpeg_filter_support() -> tuple[bool, list[str]]:
+    """Verify the installed FFmpeg build supports required video filters."""
+    import subprocess
+
+    from scripts.subprocess_utils import run_quiet
+
+    missing: list[str] = []
+    result = run_quiet(["ffmpeg", "-hide_banner", "-filters"])
+    filters_output = (result.stdout or "") + (result.stderr or "")
+    for required in ("drawtext", "zoompan", "minterpolate"):
+        if required not in filters_output:
+            missing.append(required)
+    return len(missing) == 0, missing
+
+
 def preflight_pipeline(
     input_video: str | Path,
     render_config: dict | None = None,
@@ -50,6 +65,15 @@ def preflight_pipeline(
         )
     else:
         logger.info("[Validation] Preflight font OK: %s", font_path)
+
+    filters_ok, missing_filters = validate_ffmpeg_filter_support()
+    checks["ffmpeg_filters"] = filters_ok
+    if not filters_ok:
+        errors.append(
+            "FFmpeg is missing required filters: "
+            + ", ".join(missing_filters)
+            + ". Text overlays and viral polish require drawtext (and zoompan/minterpolate)."
+        )
 
     ok = all(checks.values())
     logger.info("[Validation] Preflight checks: %s", checks)

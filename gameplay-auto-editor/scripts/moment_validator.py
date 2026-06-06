@@ -46,8 +46,16 @@ def count_validation_signals(highlight: dict, cfg: dict[str, Any]) -> int:
     return signal_hits
 
 
+def is_synthetic_fallback_highlight(highlight: dict) -> bool:
+    """True only for pipeline-generated synthetic clips, not weighted scoring fallbacks."""
+    if str(highlight.get("id", "")) == "highlight_fallback":
+        return True
+    mode = str(highlight.get("selection_mode", ""))
+    return mode in {"fallback_single", "pipeline_fallback"}
+
+
 def _is_fallback_moment(highlight: dict) -> bool:
-    return str(highlight.get("selection_mode", "")).startswith("fallback")
+    return is_synthetic_fallback_highlight(highlight)
 
 
 def _passes_validation(highlight: dict, cfg: dict[str, Any]) -> bool:

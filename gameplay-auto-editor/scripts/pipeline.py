@@ -295,7 +295,12 @@ def run_pipeline(
             elif not clip.get("overlay_applied", True):
                 emit_ui_notice(
                     progress_callback,
-                    "[UI] Overlay render used fallback — check log for [Enhancer] polish status",
+                    "[UI] Text overlays and polish could not be applied — check log for [Enhancer] and [FFmpeg] entries",
+                )
+            elif clip.get("overlay_error"):
+                emit_ui_notice(
+                    progress_callback,
+                    f"[UI] Overlay render failed earlier — enhancer did not recover: {clip.get('overlay_error')[:120]}",
                 )
         except Exception as exc:  # noqa: BLE001 - enhancement must never break pipeline
             logger.warning("[Enhancer] Skipped enhancement for %s: %s", clip.get("id"), exc)

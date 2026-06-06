@@ -170,6 +170,7 @@
       "impact_display_seconds": 1.2,
       "always_apply_polish": true,
       "burn_captions_when_overlay_missing": true,
+      "always_burn_hook_text": true,
       "require_validation_for_slowmo": true,
       "require_validation_for_effects": true,
       "min_validation_score": 45,

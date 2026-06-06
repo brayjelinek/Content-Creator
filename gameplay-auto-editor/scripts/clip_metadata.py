@@ -24,7 +24,7 @@ def summarize_enhancements(clip: dict) -> list[str]:
     badges: list[str] = []
     if clip.get("overlay_applied"):
         badges.append("Overlay captions")
-    elif clip.get("viral_captions_burned"):
+    elif clip.get("viral_captions_burned") or clip.get("text_overlay_recovered"):
         badges.append("Burned captions")
 
     if clip.get("viral_enhanced"):

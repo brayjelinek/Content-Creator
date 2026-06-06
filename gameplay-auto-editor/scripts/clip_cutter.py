@@ -119,6 +119,7 @@ def process_single_highlight(
 
     logger.info("[FFmpeg] Rendering vertical clip %s", final_path.name)
     overlay_applied = False
+    overlay_error = ""
     try:
         render_vertical_clip(
             render_source,
@@ -129,6 +130,7 @@ def process_single_highlight(
         )
         overlay_applied = True
     except Exception as exc:
+        overlay_error = str(exc)
         logger.error("[FFmpeg] Overlay render failed for %s: %s", highlight.get("id"), exc)
         logger.warning("[FFmpeg] Retrying %s without text overlays (vertical-only fallback).", final_path.name)
         render_vertical_clip_base(render_source, final_path, render_settings)
@@ -144,6 +146,8 @@ def process_single_highlight(
 
     metadata = dict(highlight)
     metadata["overlay_applied"] = overlay_applied
+    if overlay_error:
+        metadata["overlay_error"] = overlay_error
     metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
     return {
         **highlight,
@@ -154,7 +158,36 @@ def process_single_highlight(
         "metadata": str(metadata_path),
         "has_audio": has_audio,
         "overlay_applied": overlay_applied,
+        "overlay_error": overlay_error,
     }
+
+
+def apply_text_overlays_to_clip(
+    input_path: str | Path,
+    output_path: str | Path,
+    highlight: dict,
+    render_config: dict | None = None,
+) -> None:
+    """Burn hook/caption drawtext onto an already rendered vertical clip."""
+    input_path = Path(input_path)
+    output_path = Path(output_path)
+    settings = merge_render_config(render_config)
+    font_path = resolve_font_path(settings.get("font_candidates"))
+    filter_chain = build_vertical_filter_chain(
+        hook_text=highlight.get("hook_text", "Wait for it"),
+        caption_text=highlight.get("caption_text", highlight.get("summary", "")),
+        caption_lines=highlight.get("caption_lines"),
+        settings=settings,
+    )
+    validate_font_path(font_path)
+    validate_filter_chain_ready(filter_chain)
+    _execute_vertical_render(
+        input_path=input_path,
+        output_path=output_path,
+        filter_chain=filter_chain,
+        settings=settings,
+        stage="apply_text_overlays",
+    )
 
 
 def build_output_names(video_id: str, clip_index: str) -> dict[str, str]:

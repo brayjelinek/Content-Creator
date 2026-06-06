@@ -13,11 +13,13 @@ from scripts.clip_cutter import (
     _caption_line_positions,
     _centered_x_expression,
     _max_chars_for_safe_width,
+    apply_text_overlays_to_clip,
     format_font_path,
     get_video_duration,
     probe_has_audio,
 )
-from scripts.moment_validator import is_validated_for_premium_effects, is_validated_for_slowmo
+from scripts.moment_validator import is_synthetic_fallback_highlight, is_validated_for_premium_effects, is_validated_for_slowmo
+from scripts.pipeline_validation import validate_filter_chain_ready, validate_font_path
 from scripts.ass_captions import build_ass_subtitle_path, escape_ass_filter_path
 from scripts.render_settings import merge_render_config, resolve_font_path
 from scripts.text_utils import sanitize_overlay_text, wrap_overlay_text
@@ -44,7 +46,7 @@ DEFAULT_VIRAL_CONFIG: dict[str, Any] = {
     "impact_fade_out_seconds": 0.25,
     "impact_display_seconds": 1.2,
     "burn_captions_when_overlay_missing": True,
-    "always_burn_hook_text": False,
+    "always_burn_hook_text": True,
     "require_validation_for_slowmo": True,
     "require_validation_for_effects": True,
     "min_validation_score": 45,
@@ -89,6 +91,9 @@ def enhance_rendered_clip(clip_path: str | Path, highlight: dict, render_config:
     impact_t = _impact_time_in_clip(highlight, duration)
     temp_output = clip_path.with_suffix(".viral.tmp.mp4")
 
+    if not highlight.get("overlay_applied", True):
+        _recover_missing_text_overlays(clip_path, highlight, settings)
+
     try:
         filter_summary = _render_enhanced_clip(
             input_path=clip_path,
@@ -111,34 +116,64 @@ def enhance_rendered_clip(clip_path: str | Path, highlight: dict, render_config:
         highlight["viral_captions_burned"] = burn_captions
         highlight["viral_hook_burned"] = burn_hook and burn_captions
         highlight["zoom_applied"] = bool(viral.get("zoom_enabled", True)) and use_premium
-        highlight["impact_text_applied"] = bool(viral.get("impact_text_enabled", True)) and use_premium
+        highlight["impact_text_applied"] = bool(viral.get("impact_text_enabled", True)) and (
+            use_premium or burn_captions or highlight.get("text_overlay_recovered")
+        )
         highlight["moment_validated"] = use_premium
         if apply_styled_ass_captions(clip_path, highlight, settings, viral):
             highlight["viral_ass_captions_applied"] = True
         logger.info("[Enhancer] Filters applied: %s", filter_summary)
         logger.info("[Enhancer] Using enhanced clip path: %s", resolved_path)
+        if filter_summary in {"", "format polish"}:
+            logger.warning("[Enhancer] No visible effects were applied — treating as fallback to raw clip")
+            return False
         return True
     except Exception as exc:  # noqa: BLE001 - never break pipeline
         logger.warning("[Enhancer] Fallback to raw clip: %s", exc)
+        temp_output.unlink(missing_ok=True)
+        if not highlight.get("overlay_applied", True) and not highlight.get("viral_captions_burned"):
+            if _recover_missing_text_overlays(clip_path, highlight, settings):
+                logger.info("[Enhancer] Recovered clip using text-only overlay pass")
+                return True
+        return False
+
+
+def _recover_missing_text_overlays(clip_path: Path, highlight: dict, settings: dict) -> bool:
+    """Use the same drawtext path as clip_cutter when the initial overlay render failed."""
+    temp_output = clip_path.with_suffix(".text.tmp.mp4")
+    try:
+        apply_text_overlays_to_clip(clip_path, temp_output, highlight, settings)
+        temp_output.replace(clip_path)
+        highlight["viral_captions_burned"] = True
+        highlight["viral_hook_burned"] = True
+        highlight["text_overlay_recovered"] = True
+        logger.info("[Enhancer] Text overlays recovered on %s", clip_path.name)
+        return True
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[Enhancer] Text overlay recovery failed: %s", exc)
         temp_output.unlink(missing_ok=True)
         return False
 
 
 def _resolve_effect_flags(highlight: dict, viral: dict) -> tuple[bool, bool, bool, bool]:
     """Decide which viral effects to apply with safe fallbacks."""
-    is_fallback = str(highlight.get("selection_mode", "")).startswith("fallback")
+    synthetic_fallback = is_synthetic_fallback_highlight(highlight)
     always_polish = bool(viral.get("always_apply_polish", True))
+    overlay_missing = not highlight.get("overlay_applied", True)
     burn_captions = bool(
-        viral.get("burn_captions_when_overlay_missing", True) and not highlight.get("overlay_applied", True)
-    )
+        viral.get("burn_captions_when_overlay_missing", True) and overlay_missing
+    ) or bool(viral.get("always_burn_hook_text", False))
     burn_hook = bool(viral.get("always_burn_hook_text", False)) or burn_captions
 
-    if is_fallback:
-        return False, False, burn_captions, burn_hook
+    if synthetic_fallback:
+        return False, False, burn_captions or overlay_missing, burn_hook or overlay_missing
 
     if always_polish:
         use_slowmo = bool(viral.get("slowmo_enabled", True))
         use_premium = True
+        if overlay_missing:
+            burn_captions = True
+            burn_hook = True
     else:
         use_slowmo = bool(viral.get("slowmo_enabled", True)) and is_validated_for_slowmo(highlight, viral)
         use_premium = is_validated_for_premium_effects(highlight, viral)
@@ -269,6 +304,10 @@ def _run_ffmpeg_enhance(
     has_audio: bool,
     sfx_path: Path | None,
 ) -> None:
+    font_path = resolve_font_path(settings.get("font_candidates"))
+    if "drawtext=" in filter_chain:
+        validate_font_path(font_path)
+        validate_filter_chain_ready(filter_chain)
     command = [
         "ffmpeg",
         "-y",
@@ -540,7 +579,7 @@ def build_viral_filter_chain(
             include_caption=bool(burn_captions),
         )
 
-    if viral.get("impact_text_enabled", True) and use_premium:
+    if viral.get("impact_text_enabled", True) and (use_premium or burn_captions):
         impact_label = sanitize_overlay_text(str(highlight.get("impact_text") or "INSANE").upper())
         impact_y = height - bottom_safe - caption_font - 20
         font_opt = f"fontfile={format_font_path(font_path)}:" if font_path else ""
