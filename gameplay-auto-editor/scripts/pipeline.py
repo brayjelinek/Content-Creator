@@ -220,6 +220,16 @@ def run_pipeline(
         add_hashtags=bool(render_config.get("add_hashtags", True)),
         render_config=render_config,
     )
+    try:
+        from scripts.embedded_agent.caption_rewriter import maybe_rewrite_captions
+
+        captioned_highlights = maybe_rewrite_captions(
+            captioned_highlights,
+            config=config,
+            video_name=video_stem,
+        )
+    except Exception as exc:  # noqa: BLE001 - agent caption rewrite must never break pipeline
+        logger.warning("[Pipeline] Agent caption rewrite skipped: %s", exc)
     viral_cfg = render_config.get("viral_enhancements", {})
     captioned_highlights = [
         enrich_highlight_validation(highlight, viral_cfg) for highlight in captioned_highlights

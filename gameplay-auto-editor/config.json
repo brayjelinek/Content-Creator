@@ -17,8 +17,21 @@
       "styled_ass_captions": false,
       "whisper_transcription": false,
       "batch_queue": true,
-      "direct_publish": false
+      "direct_publish": false,
+      "embedded_agent": false
     }
+  },
+  "embedded_agent": {
+    "enabled": false,
+    "mode": "advisor",
+    "provider": "openai",
+    "model": "gpt-4o-mini",
+    "max_turns_per_session": 50,
+    "max_tool_calls_per_turn": 3,
+    "max_context_clips": 5,
+    "allow_caption_rewrite": false,
+    "allow_settings_suggestions": true,
+    "require_tool_approval": true
   },
   "social_publish": {
     "enabled": false,

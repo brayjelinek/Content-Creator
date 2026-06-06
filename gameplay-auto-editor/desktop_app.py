@@ -16,6 +16,7 @@ from tkinter import DoubleVar, StringVar, Text, Tk
 from tkinter import ttk
 
 from scripts.clip_metadata import quality_tier, summarize_enhancements
+from scripts.embedded_agent.advisor import EmbeddedAgentAdvisor
 from scripts.pipeline import PROJECT_ROOT, load_config, run_pipeline
 from scripts.social_publish.manager import SocialPublishManager
 from scripts.ui_logging import attach_ui_log_handler, detach_ui_log_handler
@@ -66,6 +67,13 @@ class GameplayAutoEditorApp:
         self.batch_reports: list[dict] = []
         self.config = load_config()
         self.social_manager = SocialPublishManager(self.config, PROJECT_ROOT)
+        self.agent_advisor = EmbeddedAgentAdvisor(
+            self.config,
+            PROJECT_ROOT,
+            approval_callback=self._agent_tool_approval,
+        )
+        self.agent_input_var = StringVar(value="")
+        self.agent_status_var = StringVar(value=self._agent_status_text())
         self.social_status_vars = {
             "youtube": StringVar(value="YouTube: checking..."),
             "tiktok": StringVar(value="TikTok: checking..."),
@@ -75,6 +83,7 @@ class GameplayAutoEditorApp:
         self._build_ui()
         self._poll_output_queue()
         self._refresh_social_status()
+        self.agent_advisor.update_context(ui_settings=self._ui_settings_snapshot())
 
     def _build_ui(self) -> None:
         outer = ttk.Frame(self.root, padding=18)
@@ -188,6 +197,45 @@ class GameplayAutoEditorApp:
                 side=LEFT,
                 padx=(8, 0),
             )
+
+        self.agent_frame = ttk.LabelFrame(outer, text="Optional: AI Assistant (advisor)", padding=10)
+        self.agent_frame.pack(fill="x", pady=(0, 12))
+        ttk.Label(
+            self.agent_frame,
+            text=(
+                "Ask questions about your clips, setup, settings, and posting strategy. "
+                "The assistant uses local run data only — secrets are never sent. "
+                "Mutating actions require your approval. Enable embedded_agent.enabled and "
+                "rollout.optional_features.embedded_agent in config.json."
+            ),
+            wraplength=960,
+        ).pack(anchor=W)
+        ttk.Label(self.agent_frame, textvariable=self.agent_status_var, wraplength=960).pack(anchor=W, pady=(4, 0))
+
+        quick_row = ttk.Frame(self.agent_frame)
+        quick_row.pack(fill="x", pady=(6, 0))
+        ttk.Label(quick_row, text="Quick:").pack(side=LEFT)
+        for label, key in (
+            ("Explain clips", "explain_clips"),
+            ("Help setup", "help_setup"),
+            ("Suggest settings", "suggest_settings"),
+            ("Posting tips", "posting_strategy"),
+        ):
+            ttk.Button(quick_row, text=label, command=lambda k=key: self.agent_quick_prompt(k)).pack(
+                side=LEFT,
+                padx=(8, 0),
+            )
+
+        self.agent_chat = Text(self.agent_frame, height=6, wrap="word", state="disabled")
+        self.agent_chat.pack(fill="x", pady=(8, 0))
+
+        input_row = ttk.Frame(self.agent_frame)
+        input_row.pack(fill="x", pady=(6, 0))
+        self.agent_entry = ttk.Entry(input_row, textvariable=self.agent_input_var, width=80)
+        self.agent_entry.pack(side=LEFT, fill="x", expand=True)
+        self.agent_entry.bind("<Return>", lambda _event: self.agent_send_message())
+        ttk.Button(input_row, text="Send", command=self.agent_send_message).pack(side=LEFT, padx=(8, 0))
+        ttk.Button(input_row, text="Clear chat", command=self.agent_clear_chat).pack(side=LEFT, padx=(8, 0))
 
         progress = ttk.LabelFrame(outer, text="2. Progress", padding=10)
         progress.pack(fill="x", pady=(0, 12))
@@ -459,6 +507,8 @@ class GameplayAutoEditorApp:
 
     def _generation_done(self, report: dict) -> None:
         self.report = report
+        self.agent_advisor.update_context(report=report, ui_settings=self._ui_settings_snapshot())
+        self.agent_status_var.set(self._agent_status_text())
         self.generate_button.configure(state="normal")
         clips_created = int(report.get("clips_created", 0))
         batch_count = int(report.get("batch_count", 0))
@@ -799,6 +849,126 @@ class GameplayAutoEditorApp:
         else:
             messagebox.showwarning(APP_TITLE, result.message)
             self.status_var.set(result.message)
+
+    def _agent_status_text(self) -> str:
+        if not self.agent_advisor.is_enabled():
+            return "Assistant disabled — enable embedded_agent in config.json to activate."
+        provider = self.agent_advisor.settings.provider
+        has_key = bool(self.agent_advisor.settings.openai_api_key or self.agent_advisor.settings.anthropic_api_key)
+        mode = "AI-powered" if has_key else "local fallback (add OPENAI_API_KEY for full responses)"
+        return f"Assistant ready ({mode}, provider={provider})."
+
+    def _ui_settings_snapshot(self) -> dict[str, str]:
+        return {
+            "vision_provider": self.provider_var.get(),
+            "max_clips": self.max_clips_var.get(),
+            "min_score": self.min_score_var.get(),
+            "platform_preset": self.platform_var.get(),
+            "game_profile": self.game_profile_var.get(),
+            "smart_reframe": self.smart_reframe_var.get(),
+        }
+
+    def _agent_tool_approval(self, tool_name: str, arguments: dict) -> bool:
+        if tool_name == "suggest_settings":
+            return messagebox.askyesno(
+                APP_TITLE,
+                "The assistant wants to analyze your settings and suggest improvements.\n\nAllow this?",
+            )
+        return messagebox.askyesno(
+            APP_TITLE,
+            f"Allow assistant tool: {tool_name}?",
+        )
+
+    def _append_agent_message(self, role: str, content: str) -> None:
+        self.agent_chat.configure(state="normal")
+        prefix = "You: " if role == "user" else "Assistant: "
+        self.agent_chat.insert(END, f"{prefix}{content}\n\n")
+        self.agent_chat.configure(state="disabled")
+        self.agent_chat.see(END)
+
+    def agent_clear_chat(self) -> None:
+        self.agent_advisor.clear_conversation()
+        self.agent_chat.configure(state="normal")
+        self.agent_chat.delete("1.0", END)
+        self.agent_chat.configure(state="disabled")
+        self.status_var.set("Assistant chat cleared.")
+
+    def agent_send_message(self) -> None:
+        message = self.agent_input_var.get().strip()
+        if not message:
+            return
+        if not self.agent_advisor.is_enabled():
+            messagebox.showinfo(
+                APP_TITLE,
+                "Assistant is disabled. Enable embedded_agent.enabled and "
+                "rollout.optional_features.embedded_agent in config.json.",
+            )
+            return
+        self.agent_input_var.set("")
+        self._append_agent_message("user", message)
+        self.agent_status_var.set("Assistant thinking...")
+        thread = threading.Thread(target=self._agent_worker, args=(message,), daemon=True)
+        thread.start()
+
+    def agent_quick_prompt(self, prompt_key: str) -> None:
+        if not self.agent_advisor.is_enabled():
+            messagebox.showinfo(APP_TITLE, "Enable embedded_agent in config.json first.")
+            return
+        prompt = self.agent_advisor.QUICK_PROMPTS.get(prompt_key, "")
+        if not prompt:
+            return
+        self.agent_input_var.set(prompt)
+        self.agent_send_message()
+
+    def _agent_worker(self, message: str) -> None:
+        try:
+            self.agent_advisor.update_context(
+                report=self.report,
+                ui_settings=self._ui_settings_snapshot(),
+            )
+            result = self.agent_advisor.ask(message)
+            self.root.after(0, lambda: self._on_agent_response(result, None))
+        except Exception as exc:  # noqa: BLE001
+            self.root.after(0, lambda: self._on_agent_response(None, exc))
+
+    def _on_agent_response(self, result: dict | None, error: Exception | None) -> None:
+        self.agent_status_var.set(self._agent_status_text())
+        if error:
+            self._append_agent_message("assistant", f"Error: {error}")
+            return
+        content = str((result or {}).get("content") or "No response.")
+        self._append_agent_message("assistant", content)
+        suggestions: list[dict[str, str]] = []
+        for item in (result or {}).get("tool_results") or []:
+            if item.get("tool") == "suggest_settings":
+                suggestions.extend((item.get("result") or {}).get("suggestions") or [])
+        if suggestions and messagebox.askyesno(
+            APP_TITLE,
+            f"The assistant found {len(suggestions)} setting suggestion(s).\n\nApply them to the UI controls?",
+        ):
+            self._apply_agent_suggestions(suggestions)
+
+    def _apply_agent_suggestions(self, suggestions: list[dict[str, str]]) -> None:
+        mapping = {
+            "highlight_detection.min_score": ("min_score_var", str),
+            "highlight_detection.max_clips": ("max_clips_var", str),
+            "highlight_detection.game_profile": ("game_profile_var", str),
+            "vision.provider": ("provider_var", str),
+            "rendering.platform_preset": ("platform_var", str),
+        }
+        applied = 0
+        for suggestion in suggestions:
+            setting = suggestion.get("setting", "")
+            suggested = str(suggestion.get("suggested", "")).split("/")[0].strip()
+            attr = mapping.get(setting)
+            if not attr or not suggested:
+                continue
+            var_name, _ = attr
+            var = getattr(self, var_name, None)
+            if var is not None:
+                var.set(suggested.split()[0])
+                applied += 1
+        self.status_var.set(f"Applied {applied} assistant suggestion(s) to UI controls.")
 
     def copy_all_captions(self) -> None:
         report = self.report or {}
