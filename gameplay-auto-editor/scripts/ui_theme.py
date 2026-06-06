@@ -1,229 +1,259 @@
-"""Modern dark theme for the desktop app."""
+"""Modern theme wiring for the desktop app."""
 
 from __future__ import annotations
 
-import sys
 import tkinter as tk
 from tkinter import ttk
+
+from scripts.ui_design_system import DS, DesignSystem
 
 
 class AppTheme:
     """Centralized palette and ttk style configuration."""
 
-    # Neutral gray palette with a single accent
-    BG = "#111214"
-    SURFACE = "#181a1f"
-    SURFACE_ELEVATED = "#202329"
-    SURFACE_HOVER = "#2a2e36"
-    BORDER = "#343944"
-    TEXT = "#f5f6f8"
-    TEXT_MUTED = "#a3a8b3"
-    TEXT_DIM = "#727784"
-    ACCENT = "#6366f1"
-    ACCENT_SOFT = "#2a2d4a"
-    ACCENT_GLOW = "#818cf8"
-    SUCCESS = "#22c55e"
-    WARNING = "#eab308"
-    DANGER = "#ef4444"
-    INPUT_BG = "#15171c"
-    HERO_GRADIENT = "#1b1e26"
-    SHADOW = "#0a0b0d"
+    DS = DS
 
-    SPACING_XS = 4
-    SPACING_SM = 8
-    SPACING_MD = 12
-    SPACING_LG = 16
-    SPACING_XL = 24
-    RADIUS = 10
-
-    FONT_UI = ("Segoe UI", 10) if sys.platform.startswith("win") else ("Roboto", 10)
-    FONT_UI_BOLD = ("Segoe UI Semibold", 10, "bold") if sys.platform.startswith("win") else ("Roboto Medium", 10, "bold")
-    FONT_TITLE = ("Segoe UI Semibold", 20, "bold") if sys.platform.startswith("win") else ("Roboto Medium", 20, "bold")
-    FONT_HERO = ("Segoe UI Semibold", 15, "bold") if sys.platform.startswith("win") else ("Roboto Medium", 15, "bold")
-    FONT_SUBTITLE = ("Segoe UI", 10) if sys.platform.startswith("win") else ("Roboto", 10)
-    FONT_SMALL = ("Segoe UI", 9) if sys.platform.startswith("win") else ("Roboto", 9)
-    FONT_MONO = ("Consolas", 9) if sys.platform.startswith("win") else ("DejaVu Sans Mono", 9)
-    FONT_CHIP = ("Segoe UI", 8) if sys.platform.startswith("win") else ("Roboto", 8)
-    FONT_STEP = ("Segoe UI Semibold", 9) if sys.platform.startswith("win") else ("Roboto Medium", 9)
+    @classmethod
+    def _c(cls, name: str) -> str:
+        return getattr(cls.DS.color, name)
 
     @classmethod
     def apply(cls, root: tk.Tk) -> ttk.Style:
-        root.configure(bg=cls.BG)
+        fonts = DesignSystem.build_fonts(root)
+        cls.fonts = fonts
+
+        BG = cls._c("background")
+        SURFACE = cls._c("surface")
+        SURFACE_ELEVATED = cls._c("surface_elevated")
+        SURFACE_HOVER = cls._c("surface_hover")
+        BORDER = cls._c("border")
+        TEXT = cls._c("text")
+        TEXT_MUTED = cls._c("text_muted")
+        TEXT_DIM = cls._c("text_dim")
+        ACCENT = cls._c("primary")
+        ACCENT_SOFT = cls._c("primary_soft")
+        ACCENT_GLOW = cls._c("primary_hover")
+        SUCCESS = cls._c("success")
+        INPUT_BG = cls._c("input")
+
+        cls.BG = BG
+        cls.SURFACE = SURFACE
+        cls.SURFACE_ELEVATED = SURFACE_ELEVATED
+        cls.SURFACE_HOVER = SURFACE_HOVER
+        cls.BORDER = BORDER
+        cls.TEXT = TEXT
+        cls.TEXT_MUTED = TEXT_MUTED
+        cls.TEXT_DIM = TEXT_DIM
+        cls.ACCENT = ACCENT
+        cls.ACCENT_SOFT = ACCENT_SOFT
+        cls.ACCENT_GLOW = ACCENT_GLOW
+        cls.SUCCESS = SUCCESS
+        cls.INPUT_BG = INPUT_BG
+        cls.FONT_UI = fonts.body
+        cls.FONT_UI_BOLD = fonts.body_bold
+        cls.FONT_TITLE = fonts.h2
+        cls.FONT_HERO = fonts.h3
+        cls.FONT_SUBTITLE = fonts.body
+        cls.FONT_SMALL = fonts.caption
+        cls.FONT_MONO = (fonts.mono, 9)
+        cls.FONT_CHIP = fonts.caption
+        cls.FONT_STEP = fonts.h6
+        cls.SPACING_XS = DS.space.xs
+        cls.SPACING_SM = DS.space.sm
+        cls.SPACING_MD = DS.space.md
+        cls.SPACING_LG = DS.space.lg
+        cls.SPACING_XL = DS.space.xl
+
+        root.configure(bg=BG)
         try:
             style = ttk.Style(root)
             style.theme_use("clam")
         except tk.TclError:
             style = ttk.Style(root)
 
-        style.configure(".", background=cls.BG, foreground=cls.TEXT, font=cls.FONT_UI)
-        style.configure("TFrame", background=cls.BG)
-        style.configure("Surface.TFrame", background=cls.SURFACE)
-        style.configure("Elevated.TFrame", background=cls.SURFACE_ELEVATED)
-        style.configure("Hero.TFrame", background=cls.HERO_GRADIENT)
-        style.configure("Steps.TFrame", background=cls.SURFACE)
-        style.configure("Copilot.TFrame", background=cls.SURFACE_ELEVATED)
+        style.configure(".", background=BG, foreground=TEXT, font=fonts.body)
+        style.configure("TFrame", background=BG)
+        style.configure("Surface.TFrame", background=SURFACE)
+        style.configure("Elevated.TFrame", background=SURFACE_ELEVATED)
+        style.configure("CardSurface.TFrame", background=SURFACE_ELEVATED)
+        style.configure("Hero.TFrame", background=SURFACE_ELEVATED)
+        style.configure("Steps.TFrame", background=BG)
+        style.configure("Copilot.TFrame", background=SURFACE_ELEVATED)
 
-        style.configure("TLabel", background=cls.BG, foreground=cls.TEXT, font=cls.FONT_UI)
-        style.configure("Muted.TLabel", background=cls.BG, foreground=cls.TEXT_MUTED, font=cls.FONT_SMALL)
-        style.configure("Surface.TLabel", background=cls.SURFACE, foreground=cls.TEXT, font=cls.FONT_UI)
-        style.configure("Hero.TLabel", background=cls.HERO_GRADIENT, foreground=cls.TEXT, font=cls.FONT_HERO)
-        style.configure("HeroMuted.TLabel", background=cls.HERO_GRADIENT, foreground=cls.TEXT_MUTED, font=cls.FONT_SUBTITLE)
-        style.configure("Step.TLabel", background=cls.SURFACE, foreground=cls.TEXT_DIM, font=cls.FONT_STEP)
-        style.configure("StepActive.TLabel", background=cls.SURFACE, foreground=cls.ACCENT_GLOW, font=cls.FONT_STEP)
-        style.configure("Copilot.TLabel", background=cls.SURFACE_ELEVATED, foreground=cls.TEXT, font=cls.FONT_UI)
-        style.configure(
-            "CopilotMuted.TLabel",
-            background=cls.SURFACE_ELEVATED,
-            foreground=cls.TEXT_MUTED,
-            font=cls.FONT_SMALL,
-        )
-        style.configure("Title.TLabel", background=cls.BG, foreground=cls.TEXT, font=cls.FONT_TITLE)
-        style.configure("Subtitle.TLabel", background=cls.BG, foreground=cls.TEXT_MUTED, font=cls.FONT_SUBTITLE)
-        style.configure("CardTitle.TLabel", background=cls.SURFACE_ELEVATED, foreground=cls.TEXT, font=cls.FONT_UI_BOLD)
-        style.configure("CardMuted.TLabel", background=cls.SURFACE_ELEVATED, foreground=cls.TEXT_MUTED, font=cls.FONT_SMALL)
-        style.configure("HeroCardMuted.TLabel", background=cls.HERO_GRADIENT, foreground=cls.TEXT_MUTED, font=cls.FONT_SMALL)
+        for name, font in (
+            ("H1.TLabel", fonts.h1),
+            ("H2.TLabel", fonts.h2),
+            ("H3.TLabel", fonts.h3),
+            ("H4.TLabel", fonts.h4),
+            ("H5.TLabel", fonts.h5),
+            ("H6.TLabel", fonts.h6),
+            ("Body.TLabel", fonts.body),
+            ("Caption.TLabel", fonts.caption),
+        ):
+            style.configure(name, background=SURFACE_ELEVATED, foreground=TEXT, font=font)
+
+        style.configure("TLabel", background=BG, foreground=TEXT, font=fonts.body)
+        style.configure("Muted.TLabel", background=BG, foreground=TEXT_MUTED, font=fonts.caption)
+        style.configure("Surface.TLabel", background=SURFACE, foreground=TEXT, font=fonts.body)
+        style.configure("Hero.TLabel", background=SURFACE_ELEVATED, foreground=TEXT, font=fonts.h3)
+        style.configure("HeroMuted.TLabel", background=SURFACE_ELEVATED, foreground=TEXT_MUTED, font=fonts.body)
+        style.configure("Step.TLabel", background=BG, foreground=TEXT_DIM, font=fonts.h6)
+        style.configure("StepActive.TLabel", background=BG, foreground=ACCENT_GLOW, font=fonts.h6)
+        style.configure("Copilot.TLabel", background=SURFACE_ELEVATED, foreground=TEXT, font=fonts.body_bold)
+        style.configure("CopilotMuted.TLabel", background=SURFACE_ELEVATED, foreground=TEXT_MUTED, font=fonts.caption)
+        style.configure("Title.TLabel", background=BG, foreground=TEXT, font=fonts.h2)
+        style.configure("Subtitle.TLabel", background=BG, foreground=TEXT_MUTED, font=fonts.body)
+        style.configure("CardTitle.TLabel", background=SURFACE_ELEVATED, foreground=TEXT, font=fonts.body_bold)
+        style.configure("CardMuted.TLabel", background=SURFACE_ELEVATED, foreground=TEXT_MUTED, font=fonts.caption)
+        style.configure("HeroCardMuted.TLabel", background=SURFACE_ELEVATED, foreground=TEXT_MUTED, font=fonts.caption)
 
         style.configure(
             "TButton",
-            background=cls.SURFACE_ELEVATED,
-            foreground=cls.TEXT,
+            background=SURFACE_ELEVATED,
+            foreground=TEXT,
             borderwidth=0,
             focusthickness=0,
-            padding=(cls.SPACING_MD, cls.SPACING_SM),
-            font=cls.FONT_UI,
+            padding=(DS.space.md, DS.space.sm),
+            font=fonts.body,
         )
         style.map(
             "TButton",
-            background=[("active", cls.SURFACE_HOVER), ("pressed", cls.BORDER)],
-            foreground=[("disabled", cls.TEXT_DIM)],
+            background=[("active", SURFACE_HOVER), ("pressed", BORDER), ("disabled", SURFACE)],
+            foreground=[("disabled", TEXT_DIM)],
         )
         style.configure(
-            "Accent.TButton",
-            background=cls.ACCENT,
+            "Primary.TButton",
+            background=ACCENT,
             foreground="#ffffff",
             borderwidth=0,
             focusthickness=0,
-            padding=(cls.SPACING_LG, cls.SPACING_MD),
-            font=cls.FONT_UI_BOLD,
+            padding=(DS.space.lg, DS.space.md),
+            font=fonts.button,
+        )
+        style.map(
+            "Primary.TButton",
+            background=[("active", ACCENT_GLOW), ("pressed", ACCENT), ("disabled", SURFACE_HOVER)],
+            foreground=[("disabled", TEXT_DIM)],
+        )
+        style.configure(
+            "Accent.TButton",
+            background=ACCENT,
+            foreground="#ffffff",
+            borderwidth=0,
+            focusthickness=0,
+            padding=(DS.space.lg, DS.space.md),
+            font=fonts.button,
         )
         style.map(
             "Accent.TButton",
-            background=[("active", cls.ACCENT_GLOW), ("pressed", cls.ACCENT)],
-            foreground=[("disabled", cls.TEXT_DIM)],
+            background=[("active", ACCENT_GLOW), ("pressed", ACCENT), ("disabled", SURFACE_HOVER)],
+            foreground=[("disabled", TEXT_DIM)],
         )
+        style.configure(
+            "Secondary.TButton",
+            background=SURFACE,
+            foreground=TEXT,
+            borderwidth=0,
+            padding=(DS.space.md, DS.space.sm),
+            font=fonts.body,
+        )
+        style.map("Secondary.TButton", background=[("active", SURFACE_HOVER), ("pressed", BORDER)])
         style.configure(
             "Ghost.TButton",
-            background=cls.SURFACE,
-            foreground=cls.TEXT_MUTED,
+            background=SURFACE,
+            foreground=TEXT_MUTED,
             borderwidth=0,
-            padding=(cls.SPACING_MD, cls.SPACING_SM),
-            font=cls.FONT_SMALL,
+            padding=(DS.space.md, DS.space.sm),
+            font=fonts.caption,
         )
-        style.map("Ghost.TButton", background=[("active", cls.SURFACE_HOVER)])
+        style.map("Ghost.TButton", background=[("active", SURFACE_HOVER)])
         style.configure(
             "Chip.TButton",
-            background=cls.ACCENT_SOFT,
-            foreground=cls.ACCENT_GLOW,
+            background=ACCENT_SOFT,
+            foreground=ACCENT_GLOW,
             borderwidth=0,
-            padding=(cls.SPACING_MD, cls.SPACING_XS + 1),
-            font=cls.FONT_CHIP,
+            padding=(DS.space.md, DS.space.xs + 1),
+            font=fonts.caption,
         )
-        style.map("Chip.TButton", background=[("active", cls.SURFACE_HOVER)])
+        style.map("Chip.TButton", background=[("active", SURFACE_HOVER)])
 
         style.configure(
             "TEntry",
-            fieldbackground=cls.INPUT_BG,
-            foreground=cls.TEXT,
-            bordercolor=cls.BORDER,
-            lightcolor=cls.BORDER,
-            darkcolor=cls.BORDER,
-            insertcolor=cls.TEXT,
-            padding=cls.SPACING_SM,
+            fieldbackground=INPUT_BG,
+            foreground=TEXT,
+            bordercolor=BORDER,
+            lightcolor=BORDER,
+            darkcolor=BORDER,
+            insertcolor=TEXT,
+            padding=DS.space.sm,
         )
+        style.map("TEntry", fieldbackground=[("focus", SURFACE_HOVER)], bordercolor=[("focus", ACCENT)])
         style.configure(
             "Copilot.TEntry",
-            fieldbackground=cls.INPUT_BG,
-            foreground=cls.TEXT,
-            bordercolor=cls.BORDER,
-            padding=cls.SPACING_MD,
+            fieldbackground=INPUT_BG,
+            foreground=TEXT,
+            bordercolor=BORDER,
+            padding=DS.space.md,
         )
         style.configure(
             "TCombobox",
-            fieldbackground=cls.SURFACE_ELEVATED,
-            background=cls.SURFACE_ELEVATED,
-            foreground=cls.TEXT,
-            arrowcolor=cls.TEXT_MUTED,
-            bordercolor=cls.BORDER,
-            padding=cls.SPACING_SM,
+            fieldbackground=SURFACE_ELEVATED,
+            background=SURFACE_ELEVATED,
+            foreground=TEXT,
+            arrowcolor=TEXT_MUTED,
+            bordercolor=BORDER,
+            padding=DS.space.sm,
         )
+        style.map("TCombobox", fieldbackground=[("readonly", SURFACE_ELEVATED)])
         style.configure(
             "TSpinbox",
-            fieldbackground=cls.SURFACE_ELEVATED,
-            foreground=cls.TEXT,
-            arrowcolor=cls.TEXT_MUTED,
-            bordercolor=cls.BORDER,
+            fieldbackground=SURFACE_ELEVATED,
+            foreground=TEXT,
+            arrowcolor=TEXT_MUTED,
+            bordercolor=BORDER,
         )
         style.configure(
             "TProgressbar",
-            background=cls.ACCENT,
-            troughcolor=cls.SURFACE_ELEVATED,
-            bordercolor=cls.BG,
-            lightcolor=cls.ACCENT,
-            darkcolor=cls.ACCENT,
-            thickness=6,
+            background=ACCENT,
+            troughcolor=SURFACE,
+            bordercolor=BG,
+            lightcolor=ACCENT,
+            darkcolor=ACCENT,
+            thickness=8,
         )
-        style.configure(
-            "TLabelframe",
-            background=cls.SURFACE,
-            foreground=cls.TEXT_MUTED,
-            bordercolor=cls.BG,
-            relief="flat",
-            borderwidth=0,
-        )
-        style.configure("TLabelframe.Label", background=cls.SURFACE, foreground=cls.TEXT_MUTED, font=cls.FONT_SMALL)
-        style.configure(
-            "Card.TLabelframe",
-            background=cls.SURFACE_ELEVATED,
-            foreground=cls.TEXT,
-            bordercolor=cls.BG,
-            relief="flat",
-            borderwidth=0,
-        )
-        style.configure(
-            "Card.TLabelframe.Label",
-            background=cls.SURFACE_ELEVATED,
-            foreground=cls.TEXT,
-            font=cls.FONT_UI_BOLD,
-        )
-        style.configure("TNotebook", background=cls.BG, borderwidth=0, tabmargins=(0, 0, 0, 0))
+        style.configure("TLabelframe", background=SURFACE, foreground=TEXT_MUTED, bordercolor=BG, relief="flat")
+        style.configure("TLabelframe.Label", background=SURFACE, foreground=TEXT_MUTED, font=fonts.caption)
+        style.configure("Card.TLabelframe", background=SURFACE_ELEVATED, foreground=TEXT, bordercolor=BG, relief="flat")
+        style.configure("Card.TLabelframe.Label", background=SURFACE_ELEVATED, foreground=TEXT, font=fonts.body_bold)
+        style.configure("TNotebook", background=BG, borderwidth=0, tabmargins=(0, 0, 0, 0))
         style.configure(
             "TNotebook.Tab",
-            background=cls.SURFACE,
-            foreground=cls.TEXT_MUTED,
-            padding=(cls.SPACING_LG, cls.SPACING_SM),
-            font=cls.FONT_SMALL,
+            background=SURFACE,
+            foreground=TEXT_MUTED,
+            padding=(DS.space.lg, DS.space.sm),
+            font=fonts.caption,
         )
         style.map(
             "TNotebook.Tab",
-            background=[("selected", cls.SURFACE_ELEVATED)],
-            foreground=[("selected", cls.TEXT)],
+            background=[("selected", SURFACE_ELEVATED)],
+            foreground=[("selected", TEXT)],
         )
         style.configure(
             "Treeview",
-            background=cls.SURFACE_ELEVATED,
-            foreground=cls.TEXT,
-            fieldbackground=cls.SURFACE_ELEVATED,
-            bordercolor=cls.BG,
-            rowheight=28,
+            background=SURFACE,
+            foreground=TEXT,
+            fieldbackground=SURFACE,
+            bordercolor=BG,
+            rowheight=30,
         )
-        style.configure("Treeview.Heading", background=cls.SURFACE, foreground=cls.TEXT_MUTED, font=cls.FONT_SMALL)
-        style.configure("Vertical.TScrollbar", background=cls.SURFACE, troughcolor=cls.BG, bordercolor=cls.BG)
+        style.configure("Treeview.Heading", background=SURFACE_ELEVATED, foreground=TEXT_MUTED, font=fonts.caption)
+        style.configure("Vertical.TScrollbar", background=SURFACE, troughcolor=BG, bordercolor=BG)
         return style
 
     @classmethod
     def configure_text_widget(cls, widget: tk.Text, *, mono: bool = False) -> None:
         widget.configure(
-            bg=cls.INPUT_BG if mono else cls.SURFACE_ELEVATED,
+            bg=cls.INPUT_BG if mono else cls.SURFACE,
             fg=cls.TEXT,
             insertbackground=cls.TEXT,
             relief="flat",
@@ -241,7 +271,7 @@ class AppTheme:
     @classmethod
     def configure_copilot_chat(cls, widget: tk.Text) -> None:
         widget.configure(
-            bg=cls.SURFACE_ELEVATED,
+            bg=cls.SURFACE,
             fg=cls.TEXT,
             insertbackground=cls.TEXT,
             relief="flat",
