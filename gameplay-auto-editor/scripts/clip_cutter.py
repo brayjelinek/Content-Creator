@@ -6,6 +6,8 @@ import json
 import logging
 import shutil
 import subprocess
+import sys
+import tempfile
 from pathlib import Path
 from typing import Iterable, List
 
@@ -16,10 +18,18 @@ from scripts.pipeline_validation import (
     validate_output_file_exists,
     validate_processed_clip_exists,
 )
-from scripts.render_settings import merge_render_config, resolve_font_path
+from scripts.render_settings import OUTPUT_WIDTH, merge_render_config, resolve_font_path
 from scripts.text_utils import sanitize_overlay_text, wrap_overlay_text
 
 logger = logging.getLogger(__name__)
+
+# Root cause (log 232410 / Windows AppData logs):
+# FFmpeg drawtext x-expressions with unescaped commas, e.g.
+#   x=max(120,min(w-text_w-120,(w-text_w)/2))
+# are parsed as filter separators. FFmpeg then throws:
+#   [AVFilterGraph] No option name near '250'
+# Fix: never use commas inside drawtext options; center with (w-text_w)/2
+# and pass the filter chain via -filter_script:v on Windows for reliability.
 
 
 def process_highlights(
@@ -95,13 +105,20 @@ def process_single_highlight(
     validate_processed_clip_exists(processed_path)
 
     logger.info("[FFmpeg] Rendering vertical clip %s", final_path.name)
-    render_vertical_clip(
-        processed_path,
-        final_path,
-        highlight,
-        settings,
-        video_duration=video_duration,
-    )
+    overlay_applied = False
+    try:
+        render_vertical_clip(
+            processed_path,
+            final_path,
+            highlight,
+            settings,
+            video_duration=video_duration,
+        )
+        overlay_applied = True
+    except Exception as exc:
+        logger.error("[FFmpeg] Overlay render failed for %s: %s", highlight.get("id"), exc)
+        logger.warning("[FFmpeg] Retrying %s without text overlays (vertical-only fallback).", final_path.name)
+        render_vertical_clip_base(processed_path, final_path, settings)
 
     validate_vertical_output(
         final_path,
@@ -112,7 +129,9 @@ def process_single_highlight(
     if not has_audio:
         logger.info("[FFmpeg] No audio stream detected in %s (video-only clip)", final_path.name)
 
-    metadata_path.write_text(json.dumps(highlight, indent=2), encoding="utf-8")
+    metadata = dict(highlight)
+    metadata["overlay_applied"] = overlay_applied
+    metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
     return {
         **highlight,
         "video_id": video_id,
@@ -121,6 +140,7 @@ def process_single_highlight(
         "final_clip": str(final_path),
         "metadata": str(metadata_path),
         "has_audio": has_audio,
+        "overlay_applied": overlay_applied,
     }
 
 
@@ -198,6 +218,7 @@ def render_vertical_clip(
     if not input_path.exists():
         logger.error("[FFmpeg] Input file missing: %s", input_path)
         raise FileNotFoundError(f"Input file missing: {input_path}")
+
     logger.info("[FFmpeg] Input file exists: %s", input_path)
     logger.info("[FFmpeg] Output path: %s", output_path)
     logger.info("[FFmpeg] Filter chain: %s", filter_chain)
@@ -207,42 +228,47 @@ def render_vertical_clip(
     if video_duration is not None:
         validate_highlight_timestamps(highlight, video_duration)
 
-    command = [
-        "ffmpeg",
-        "-y",
-        "-i",
-        str(input_path),
-        "-vf",
-        filter_chain,
-        "-map",
-        "0:v:0",
-        "-map",
-        "0:a?",
-        "-c:v",
-        "libx264",
-        "-preset",
-        str(settings["preset"]),
-        "-crf",
-        str(settings["video_crf"]),
-        "-c:a",
-        "aac",
-        "-shortest",
-        "-movflags",
-        "+faststart",
-        str(output_path),
-    ]
+    _execute_vertical_render(
+        input_path=input_path,
+        output_path=output_path,
+        filter_chain=filter_chain,
+        settings=settings,
+        stage="render_vertical_clip",
+    )
 
-    try:
-        logger.info("[FFmpeg] Running command: %s", " ".join(command))
-        _run_ffmpeg(command, stage="render_vertical_clip", filter_chain=filter_chain)
-        validate_output_file_exists(output_path)
-    except Exception as exc:
-        logger.error("[FFmpeg] Render failed for %s: %s", highlight.get("id"), exc)
-        logger.error("[FFmpeg] Command: %s", " ".join(command))
-        if isinstance(exc, RuntimeError) and "STDERR:" in str(exc):
-            stderr = str(exc).split("STDERR:", 1)[-1].strip()
-            logger.error("[FFmpeg] stderr: %s", stderr)
-        raise
+
+def render_vertical_clip_base(
+    input_path: str | Path,
+    output_path: str | Path,
+    render_config: dict,
+) -> None:
+    """Render a vertical clip without drawtext overlays (fail-safe fallback)."""
+    settings = merge_render_config(render_config)
+    filter_chain = build_base_vertical_filter_chain(settings)
+    logger.info("[FFmpeg] Fallback vertical filter chain: %s", filter_chain)
+    _execute_vertical_render(
+        input_path=input_path,
+        output_path=output_path,
+        filter_chain=filter_chain,
+        settings=settings,
+        stage="render_vertical_clip_base",
+    )
+
+
+def build_base_vertical_filter_chain(settings: dict | None = None) -> str:
+    """Build scale/crop chain only — no drawtext, no commas in expressions."""
+    return ",".join(_base_vertical_filters(settings))
+
+
+def _base_vertical_filters(settings: dict | None = None) -> list[str]:
+    cfg = merge_render_config(settings)
+    width = int(cfg["width"])
+    height = int(cfg["height"])
+    return [
+        f"scale={width}:{height}:force_original_aspect_ratio=increase",
+        f"crop={width}:{height}",
+        "setsar=1",
+    ]
 
 
 def build_vertical_filter_chain(
@@ -262,15 +288,17 @@ def build_vertical_filter_chain(
     box_color = str(cfg["text_box_color"])
     box_border = int(cfg["text_box_border"])
     font_path = resolve_font_path(cfg.get("font_candidates"))
+    side_safe = int(cfg["side_safe_zone"])
 
     filters: list[str] = []
-    filters.append(f"scale={width}:{height}:force_original_aspect_ratio=increase")
-    filters.append(f"crop={width}:{height}")
-    filters.append("setsar=1")
+    filters.extend(_base_vertical_filters(cfg))
+
+    hook_max_chars = _max_chars_for_safe_width(side_safe, hook_font, int(cfg["hook_max_chars"]))
+    caption_max_chars = _max_chars_for_safe_width(side_safe, caption_font, int(cfg["caption_max_chars"]))
 
     hook_lines = wrap_overlay_text(
         hook_text.upper(),
-        max_chars=int(cfg["hook_max_chars"]),
+        max_chars=hook_max_chars,
         max_lines=int(cfg["hook_max_lines"]),
     )
     if caption_lines:
@@ -278,12 +306,11 @@ def build_vertical_filter_chain(
     else:
         wrapped_caption_lines = wrap_overlay_text(
             caption_text,
-            max_chars=int(cfg["caption_max_chars"]),
+            max_chars=caption_max_chars,
             max_lines=int(cfg["caption_max_lines"]),
         )
 
-    side_safe = int(cfg["side_safe_zone"])
-    centered_x = _centered_x_with_safe_zone(side_safe)
+    centered_x = _centered_x_expression()
 
     hook_y = top_safe
     hook_line_gap = hook_font + 20
@@ -332,9 +359,16 @@ def build_vertical_filter_chain(
     return ",".join(filters)
 
 
-def _centered_x_with_safe_zone(side_safe: int) -> str:
-    """Build a drawtext x expression that keeps text inside side safe margins."""
-    return f"max({side_safe}\\,min(w-text_w-{side_safe}\\,(w-text_w)/2))"
+def _centered_x_expression() -> str:
+    """Center text horizontally without commas (commas break FFmpeg filter parsing)."""
+    return "(w-text_w)/2"
+
+
+def _max_chars_for_safe_width(side_safe: int, font_size: int, configured_max: int) -> int:
+    """Estimate readable character count inside horizontal safe margins."""
+    usable = max(OUTPUT_WIDTH - (2 * side_safe), 400)
+    estimated = max(12, int(usable / max(font_size * 0.55, 1)))
+    return min(configured_max, estimated)
 
 
 def _caption_line_positions(
@@ -393,6 +427,74 @@ def format_font_path(path: str) -> str:
     if len(normalized) >= 2 and normalized[1] == ":":
         return f"{normalized[0]}\\:{normalized[2:]}"
     return normalized
+
+
+def _execute_vertical_render(
+    *,
+    input_path: Path,
+    output_path: Path,
+    filter_chain: str,
+    settings: dict,
+    stage: str,
+) -> None:
+    """Run FFmpeg vertical render using a filter script file for Windows reliability."""
+    command = [
+        "ffmpeg",
+        "-y",
+        "-i",
+        str(input_path),
+        "-map",
+        "0:v:0",
+        "-map",
+        "0:a?",
+        "-c:v",
+        "libx264",
+        "-preset",
+        str(settings["preset"]),
+        "-crf",
+        str(settings["video_crf"]),
+        "-c:a",
+        "aac",
+        "-shortest",
+        "-movflags",
+        "+faststart",
+        str(output_path),
+    ]
+
+    filter_script = _write_filter_script(filter_chain)
+    insert_at = command.index("-map")
+    command[insert_at:insert_at] = ["-filter_script:v", str(filter_script)]
+
+    try:
+        logger.info("[FFmpeg] Running command: %s", " ".join(command))
+        logger.info("[FFmpeg] Filter script file: %s", filter_script)
+        _run_ffmpeg(command, stage=stage, filter_chain=filter_chain)
+        validate_output_file_exists(output_path)
+    except Exception as exc:
+        logger.error("[FFmpeg] Render failed during %s: %s", stage, exc)
+        logger.error("[FFmpeg] Command: %s", " ".join(command))
+        logger.error("[FFmpeg] Filter chain: %s", filter_chain)
+        if isinstance(exc, RuntimeError) and "STDERR:" in str(exc):
+            stderr = str(exc).split("STDERR:", 1)[-1].strip()
+            logger.error("[FFmpeg] stderr: %s", stderr)
+        raise
+    finally:
+        filter_script.unlink(missing_ok=True)
+
+
+def _write_filter_script(filter_chain: str) -> Path:
+    """Write the filter chain to a temp file for -filter_script:v."""
+    handle = tempfile.NamedTemporaryFile(
+        mode="w",
+        suffix=".txt",
+        prefix="gae_filter_",
+        delete=False,
+        encoding="utf-8",
+    )
+    handle.write(filter_chain)
+    handle.flush()
+    handle.close()
+    return Path(handle.name)
 
 
 def get_video_duration(video_path: str | Path) -> float:

@@ -15,6 +15,10 @@ ROOT = Path(__file__).resolve().parent
 
 def main() -> int:
     _ensure_pyinstaller()
+    fonts_dir = ROOT / "fonts"
+    fonts_dir.mkdir(exist_ok=True)
+    _prepare_bundled_font(fonts_dir)
+
     command = [
         sys.executable,
         "-m",
@@ -28,13 +32,21 @@ def main() -> int:
         _data_arg(ROOT / "config.json", "."),
         "--add-data",
         _data_arg(ROOT / ".env.example", "."),
+    ]
+
+    if (fonts_dir / "DejaVuSans-Bold.ttf").exists():
+        command.extend(["--add-data", _data_arg(fonts_dir, "fonts")])
+
+    command.extend(
+        [
         "--hidden-import",
         "openai",
         "--hidden-import",
         "anthropic",
         "--hidden-import",
         "cv2",
-    ]
+        ]
+    )
 
     for binary_name in ["ffmpeg", "ffprobe"]:
         binary_path = _find_binary(binary_name)
@@ -67,10 +79,6 @@ def _ensure_pyinstaller() -> None:
         ) from exc
 
 
-def _data_arg(source: Path, destination: str) -> str:
-    return f"{source}{os.pathsep}{destination}"
-
-
 def _find_binary(binary_name: str) -> Path | None:
     """Find the real FFmpeg binary, avoiding Chocolatey shim executables."""
     executable_name = binary_name + (".exe" if sys.platform.startswith("win") else "")
@@ -90,6 +98,31 @@ def _find_binary(binary_name: str) -> Path | None:
         return None
 
     return Path(binary_path)
+
+
+def _prepare_bundled_font(fonts_dir: Path) -> None:
+    """Copy a known-good font into the app bundle for drawtext on Windows."""
+    if (fonts_dir / "DejaVuSans-Bold.ttf").exists():
+        return
+
+    candidates = [
+        Path("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"),
+        Path("/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf"),
+        Path(r"C:\Windows\Fonts\arialbd.ttf"),
+        Path(r"C:\Windows\Fonts\arial.ttf"),
+        Path("/Library/Fonts/Arial Bold.ttf"),
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            shutil.copy2(candidate, fonts_dir / "DejaVuSans-Bold.ttf")
+            print(f"Bundled overlay font: {candidate}")
+            return
+
+    print("Warning: no overlay font found to bundle; drawtext may fail on some systems.")
+
+
+def _data_arg(source: Path, destination: str) -> str:
+    return f"{source}{os.pathsep}{destination}"
 
 
 def _write_start_here(dist_dir: Path) -> None:

@@ -20,3 +20,6 @@ models/*
 
 logs/*
 !logs/.gitkeep
+
+fonts/*
+!fonts/.gitkeep

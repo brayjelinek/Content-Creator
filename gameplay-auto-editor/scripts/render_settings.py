@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
@@ -52,11 +53,31 @@ DEFAULT_RENDER_CONFIG: dict[str, Any] = {
 def merge_render_config(config: dict | None) -> dict[str, Any]:
     """Return render settings with defaults applied."""
     merged = deepcopy(DEFAULT_RENDER_CONFIG)
+    bundled = _bundled_font_candidates()
+    if bundled:
+        merged["font_candidates"] = bundled + list(merged["font_candidates"])
     if config:
         merged.update(config)
         if "left_right_safe_zone" in config and "side_safe_zone" not in config:
             merged["side_safe_zone"] = config["left_right_safe_zone"]
     return merged
+
+
+def _bundled_font_candidates() -> list[str]:
+    """Return font paths shipped beside the desktop app, if present."""
+    candidates: list[str] = []
+    search_roots = [
+        Path(getattr(sys, "_MEIPASS", "")),
+        Path(__file__).resolve().parents[1],
+    ]
+    for root in search_roots:
+        if not root:
+            continue
+        for name in ("DejaVuSans-Bold.ttf", "arialbd.ttf", "Arial-Bold.ttf"):
+            path = root / "fonts" / name
+            if path.exists():
+                candidates.append(path.as_posix())
+    return candidates
 
 
 def resolve_font_path(candidates: list[str] | None = None) -> str:

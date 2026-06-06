@@ -161,10 +161,12 @@ def run_pipeline(
     if len(rendered) == 0:
         failure_reason = "render_failed"
         logger.warning("[Pipeline] No clips were generated — check logs above.")
+        logger.warning("[Pipeline] Stage that failed: FFmpeg vertical render")
+        logger.warning("[Pipeline] Log file: %s", log_path)
         if highlights:
             logger.warning(
                 "[Pipeline] %s highlight(s) were detected but rendering produced zero clips. "
-                "See [FFmpeg] errors in the log.",
+                "Search the log for '[FFmpeg] stderr' or 'No option name near'.",
                 len(highlights),
             )
 
