@@ -1,4 +1,4 @@
-"""Validate gameplay moments before applying viral clip enhancements."""
+"""Validate gameplay moments before applying premium viral clip effects."""
 
 from __future__ import annotations
 
@@ -11,22 +11,15 @@ logger = logging.getLogger(__name__)
 def merge_validation_config(config: dict | None) -> dict[str, Any]:
     cfg = dict(config or {})
     return {
-        "enabled": bool(cfg.get("require_validation", True)),
-        "min_validation_score": float(cfg.get("min_validation_score", 55)),
-        "min_signal_count": int(cfg.get("min_signal_count", 2)),
+        "require_slowmo_validation": bool(
+            cfg.get("require_validation_for_slowmo", cfg.get("require_validation", True))
+        ),
+        "min_validation_score": float(cfg.get("min_validation_score", 45)),
+        "min_signal_count": int(cfg.get("min_signal_count", 1)),
     }
 
 
-def is_validated_highlight(highlight: dict, validation_config: dict | None = None) -> bool:
-    """Return True when a moment has enough AI/heuristic/gameplay signal strength."""
-    cfg = merge_validation_config(validation_config)
-    if not cfg["enabled"]:
-        return True
-
-    selection_mode = str(highlight.get("selection_mode", ""))
-    if selection_mode.startswith("fallback"):
-        return False
-
+def count_validation_signals(highlight: dict, cfg: dict[str, Any]) -> int:
     breakdown = highlight.get("score_breakdown") or {}
     raw = highlight.get("raw_analysis") or {}
     signals = raw.get("gameplay_signals") or raw.get("signals") or {}
@@ -38,9 +31,9 @@ def is_validated_highlight(highlight: dict, validation_config: dict | None = Non
         signal_hits += 1
     if float(breakdown.get("ai_score", highlight.get("viral_score", 0))) >= cfg["min_validation_score"]:
         signal_hits += 1
-    if float(breakdown.get("motion_component", 0)) >= 8:
+    if float(breakdown.get("motion_component", 0)) >= 6:
         signal_hits += 1
-    if float(breakdown.get("audio_component", 0)) >= 8:
+    if float(breakdown.get("audio_component", 0)) >= 6:
         signal_hits += 1
     if breakdown.get("hitmarker_detected") or signals.get("hitmarker_detected"):
         signal_hits += 1
@@ -48,39 +41,60 @@ def is_validated_highlight(highlight: dict, validation_config: dict | None = Non
         signal_hits += 1
     if breakdown.get("low_health_detected") or signals.get("low_health_detected"):
         signal_hits += 1
+    return signal_hits
 
+
+def is_validated_for_slowmo(highlight: dict, validation_config: dict | None = None) -> bool:
+    """Return True when a moment is strong enough for pre-impact slow-mo."""
+    cfg = merge_validation_config(validation_config)
+    if not cfg["require_slowmo_validation"]:
+        return True
+
+    selection_mode = str(highlight.get("selection_mode", ""))
+    if selection_mode.startswith("fallback"):
+        return False
+
+    signal_hits = count_validation_signals(highlight, cfg)
     validated = signal_hits >= cfg["min_signal_count"]
     if validated:
         logger.info(
-            "[Enhancer] Moment validated (%s signals, score %.1f) — applying viral effects",
+            "[Enhancer] Slow-mo validated (%s signals, score %.1f)",
             signal_hits,
-            score,
+            float(highlight.get("score", 0)),
         )
     else:
         logger.info(
-            "[Enhancer] Moment not validated (%s/%s signals) — skipping viral effects",
+            "[Enhancer] Slow-mo skipped (%s/%s signals) — applying standard polish only",
             signal_hits,
             cfg["min_signal_count"],
         )
     return validated
 
 
+def is_validated_highlight(highlight: dict, validation_config: dict | None = None) -> bool:
+    """Backward-compatible alias for slow-mo validation."""
+    return is_validated_for_slowmo(highlight, validation_config)
+
+
 def enrich_highlight_validation(highlight: dict, validation_config: dict | None = None) -> dict:
     """Attach validation metadata to a highlight dict."""
     updated = dict(highlight)
-    updated["moment_validated"] = is_validated_highlight(updated, validation_config)
-    updated["validation_signals"] = _signal_summary(updated)
+    updated["moment_validated"] = is_validated_for_slowmo(updated, validation_config)
+    updated["validation_signals"] = _signal_summary(updated, validation_config)
     return updated
 
 
-def _signal_summary(highlight: dict) -> dict[str, bool]:
+def _signal_summary(highlight: dict, validation_config: dict | None = None) -> dict[str, bool]:
+    cfg = merge_validation_config(validation_config)
     breakdown = highlight.get("score_breakdown") or {}
     raw = highlight.get("raw_analysis") or {}
     signals = raw.get("gameplay_signals") or {}
+    min_score = cfg["min_validation_score"]
     return {
-        "ai_score": float(breakdown.get("ai_score", highlight.get("viral_score", 0))) >= 55,
-        "motion": float(breakdown.get("motion_component", 0)) >= 8,
-        "audio": float(breakdown.get("audio_component", 0)) >= 8,
+        "score": float(highlight.get("score", 0)) >= min_score,
+        "ai_score": float(breakdown.get("ai_score", highlight.get("viral_score", 0))) >= min_score,
+        "motion": float(breakdown.get("motion_component", 0)) >= 6,
+        "audio": float(breakdown.get("audio_component", 0)) >= 6,
         "hitmarker": bool(breakdown.get("hitmarker_detected") or signals.get("hitmarker_detected")),
         "killfeed": bool(breakdown.get("killfeed_ocr_match") or signals.get("killfeed_ocr_match")),
         "low_health": bool(breakdown.get("low_health_detected") or signals.get("low_health_detected")),

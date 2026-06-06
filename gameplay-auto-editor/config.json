@@ -88,9 +88,11 @@
       "brightness_boost": 0.02,
       "screen_shake": false,
       "impact_text_enabled": true,
-      "require_validation": true,
-      "min_validation_score": 55,
-      "min_signal_count": 2
+      "always_apply_polish": true,
+      "burn_captions_when_overlay_missing": true,
+      "require_validation_for_slowmo": true,
+      "min_validation_score": 45,
+      "min_signal_count": 1
     }
   }
 }

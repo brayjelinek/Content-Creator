@@ -160,8 +160,6 @@ def run_pipeline(
     )
     highlight_config = config.get("highlight_detection", {})
     highlights = detect_highlights(analyses, duration, highlight_config)
-    viral_cfg = render_config.get("viral_enhancements", {})
-    highlights = [enrich_highlight_validation(highlight, viral_cfg) for highlight in highlights]
     highlights = _ensure_minimum_highlights(highlights, analyses, samples, duration, highlight_config)
     logger.info("[Pipeline] Highlights detected: %s", len(highlights))
     emit_highlights_detected(progress_callback, count=len(highlights), percent=55)
@@ -189,6 +187,10 @@ def run_pipeline(
         add_hashtags=bool(render_config.get("add_hashtags", True)),
         render_config=render_config,
     )
+    viral_cfg = render_config.get("viral_enhancements", {})
+    captioned_highlights = [
+        enrich_highlight_validation(highlight, viral_cfg) for highlight in captioned_highlights
+    ]
     _write_json(report_dir / f"{video_stem}_highlights.json", captioned_highlights)
 
     paths["final"].mkdir(parents=True, exist_ok=True)
@@ -241,6 +243,15 @@ def run_pipeline(
             enhanced = enhance_rendered_clip(clip["final_clip"], clip, render_config)
             if enhanced:
                 clip["viral_enhanced"] = True
+                emit_ui_notice(
+                    progress_callback,
+                    f"[UI] Clip polished: {Path(clip['final_clip']).name}",
+                )
+            elif not clip.get("overlay_applied", True):
+                emit_ui_notice(
+                    progress_callback,
+                    "[UI] Overlay render used fallback — check log for [Enhancer] polish status",
+                )
         except Exception as exc:  # noqa: BLE001 - enhancement must never break pipeline
             logger.warning("[Enhancer] Skipped enhancement for %s: %s", clip.get("id"), exc)
 
@@ -454,14 +465,25 @@ def load_config(config_path: str | Path | None = None) -> Dict[str, Any]:
     """Load config.json and apply environment overrides."""
     load_dotenv(PROJECT_ROOT / ".env")
     path = Path(config_path) if config_path else PROJECT_ROOT / "config.json"
-    if not path.exists() and not config_path:
-        bundled_config = BUNDLED_ROOT / "config.json"
-        if bundled_config.exists():
-            path = bundled_config
-    if not path.exists():
+    bundled_config = _load_bundled_config()
+    if not path.exists() and not config_path and bundled_config:
+        config = bundled_config
+    elif path.exists():
+        config = json.loads(path.read_text(encoding="utf-8"))
+        if bundled_config and not config_path:
+            config = _deep_merge(bundled_config, config)
+    elif bundled_config:
+        config = bundled_config
+    else:
         raise FileNotFoundError(f"Config file not found: {path}")
-    config = json.loads(path.read_text(encoding="utf-8"))
     return _apply_env_overrides(config)
+
+
+def _load_bundled_config() -> Dict[str, Any] | None:
+    bundled_path = BUNDLED_ROOT / "config.json"
+    if bundled_path.exists():
+        return json.loads(bundled_path.read_text(encoding="utf-8"))
+    return None
 
 
 def ensure_project_dirs() -> dict[str, Path]:
