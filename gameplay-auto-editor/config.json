@@ -8,7 +8,8 @@
       "burn_captions_on_overlay_fail": true,
       "game_profiles": true,
       "quality_tiers": true,
-      "enhancement_badges": true
+      "enhancement_badges": true,
+      "industry_timing": true
     },
     "optional_features": {
       "smart_reframe": false,
@@ -92,8 +93,9 @@
     "min_clip_seconds": 5,
     "duration_floor_seconds": 5,
     "max_clip_seconds": 60,
-    "clip_seconds_before": 2.0,
-    "clip_seconds_after": 3.0,
+    "industry_timing_enabled": true,
+    "clip_seconds_before": 0.65,
+    "clip_seconds_after": 1.1,
     "adaptive_padding_enabled": true,
     "adaptive_short_video_threshold": 30,
     "merge_distance_seconds": 2,
@@ -111,8 +113,8 @@
     },
     "timestamp_smoothing": {
       "merge_seconds": 2,
-      "start_padding": 1.5,
-      "end_padding": 2.5
+      "start_padding": 0.35,
+      "end_padding": 0.4
     }
   },
   "rendering": {
@@ -153,6 +155,8 @@
       "slowmo_enabled": true,
       "slowmo_speed": 0.5,
       "slowmo_source_seconds": 0.45,
+      "slowmo_min_seconds": 0.3,
+      "slowmo_max_seconds": 0.6,
       "zoom_enabled": true,
       "zoom_factor": 1.1,
       "zoom_duration": 0.3,
@@ -161,9 +165,13 @@
       "brightness_boost": 0.02,
       "screen_shake": false,
       "impact_text_enabled": true,
+      "impact_fade_in_seconds": 0.12,
+      "impact_fade_out_seconds": 0.25,
+      "impact_display_seconds": 1.2,
       "always_apply_polish": true,
       "burn_captions_when_overlay_missing": true,
       "require_validation_for_slowmo": true,
+      "require_validation_for_effects": true,
       "min_validation_score": 45,
       "min_signal_count": 1,
       "sound_effects_enabled": false,

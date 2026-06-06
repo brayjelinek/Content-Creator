@@ -10,10 +10,12 @@ logger = logging.getLogger(__name__)
 
 def merge_validation_config(config: dict | None) -> dict[str, Any]:
     cfg = dict(config or {})
+    require = bool(cfg.get("require_validation_for_effects", cfg.get("require_validation_for_slowmo", True)))
     return {
         "require_slowmo_validation": bool(
-            cfg.get("require_validation_for_slowmo", cfg.get("require_validation", True))
+            cfg.get("require_validation_for_slowmo", cfg.get("require_validation", require))
         ),
+        "require_effects_validation": require,
         "min_validation_score": float(cfg.get("min_validation_score", 45)),
         "min_signal_count": int(cfg.get("min_signal_count", 1)),
     }
@@ -44,31 +46,45 @@ def count_validation_signals(highlight: dict, cfg: dict[str, Any]) -> int:
     return signal_hits
 
 
+def _is_fallback_moment(highlight: dict) -> bool:
+    return str(highlight.get("selection_mode", "")).startswith("fallback")
+
+
+def _passes_validation(highlight: dict, cfg: dict[str, Any]) -> bool:
+    if _is_fallback_moment(highlight):
+        return False
+    signal_hits = count_validation_signals(highlight, cfg)
+    return signal_hits >= cfg["min_signal_count"]
+
+
 def is_validated_for_slowmo(highlight: dict, validation_config: dict | None = None) -> bool:
     """Return True when a moment is strong enough for pre-impact slow-mo."""
     cfg = merge_validation_config(validation_config)
     if not cfg["require_slowmo_validation"]:
         return True
 
-    selection_mode = str(highlight.get("selection_mode", ""))
-    if selection_mode.startswith("fallback"):
-        return False
-
-    signal_hits = count_validation_signals(highlight, cfg)
-    validated = signal_hits >= cfg["min_signal_count"]
+    validated = _passes_validation(highlight, cfg)
     if validated:
         logger.info(
             "[Enhancer] Slow-mo validated (%s signals, score %.1f)",
-            signal_hits,
+            count_validation_signals(highlight, cfg),
             float(highlight.get("score", 0)),
         )
     else:
         logger.info(
             "[Enhancer] Slow-mo skipped (%s/%s signals) — applying standard polish only",
-            signal_hits,
+            count_validation_signals(highlight, cfg),
             cfg["min_signal_count"],
         )
     return validated
+
+
+def is_validated_for_premium_effects(highlight: dict, validation_config: dict | None = None) -> bool:
+    """Return True when zoom, impact text, and motion/audio emphasis may run."""
+    cfg = merge_validation_config(validation_config)
+    if not cfg["require_effects_validation"]:
+        return not _is_fallback_moment(highlight)
+    return _passes_validation(highlight, cfg)
 
 
 def is_validated_highlight(highlight: dict, validation_config: dict | None = None) -> bool:
@@ -79,7 +95,8 @@ def is_validated_highlight(highlight: dict, validation_config: dict | None = Non
 def enrich_highlight_validation(highlight: dict, validation_config: dict | None = None) -> dict:
     """Attach validation metadata to a highlight dict."""
     updated = dict(highlight)
-    updated["moment_validated"] = is_validated_for_slowmo(updated, validation_config)
+    updated["moment_validated"] = is_validated_for_premium_effects(updated, validation_config)
+    updated["slowmo_validated"] = is_validated_for_slowmo(updated, validation_config)
     updated["validation_signals"] = _signal_summary(updated, validation_config)
     return updated
 

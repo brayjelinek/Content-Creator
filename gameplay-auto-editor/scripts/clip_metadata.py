@@ -35,6 +35,10 @@ def summarize_enhancements(clip: dict) -> list[str]:
         badges.append("Impact SFX")
     if clip.get("zoom_applied"):
         badges.append("Impact zoom")
+    if clip.get("impact_text_applied"):
+        badges.append("Impact text")
+    if clip.get("moment_validated"):
+        badges.append("Validated moment")
     if clip.get("smart_reframe_applied"):
         badges.append("Smart reframe")
     if clip.get("viral_ass_captions_applied"):
@@ -58,6 +62,8 @@ def build_clip_report_entry(clip: dict) -> dict[str, Any]:
         "overlay_applied": bool(clip.get("overlay_applied")),
         "viral_enhanced": bool(clip.get("viral_enhanced")),
         "viral_slowmo_applied": bool(clip.get("viral_slowmo_applied")),
+        "impact_text_applied": bool(clip.get("impact_text_applied")),
+        "moment_validated": bool(clip.get("moment_validated")),
         "viral_captions_burned": bool(clip.get("viral_captions_burned")),
         "viral_sound_effect_applied": bool(clip.get("viral_sound_effect_applied")),
         "smart_reframe_applied": bool(clip.get("smart_reframe_applied")),

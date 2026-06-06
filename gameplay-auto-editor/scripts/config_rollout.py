@@ -5,6 +5,8 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any
 
+from scripts.clip_timing import INDUSTRY_TIMING_DEFAULTS
+
 DEFAULT_ROLLOUT: dict[str, Any] = {
     "stable_features": {
         "min_clip_duration": True,
@@ -15,6 +17,7 @@ DEFAULT_ROLLOUT: dict[str, Any] = {
         "game_profiles": True,
         "quality_tiers": True,
         "enhancement_badges": True,
+        "industry_timing": True,
     },
     "optional_features": {
         "smart_reframe": False,
@@ -99,6 +102,12 @@ def apply_rollout_defaults(config: dict[str, Any]) -> dict[str, Any]:
     weights.setdefault("audio_spike_threshold", 12)
     weights.setdefault("chat_spike_bonus", chat["score_bonus"])
     highlight["weighted_scoring"] = weights
+    stable = dict(rollout.get("stable_features") or {})
+    if stable.get("industry_timing", True):
+        timing = dict(INDUSTRY_TIMING_DEFAULTS)
+        timing["industry_timing_enabled"] = bool(highlight.get("industry_timing_enabled", True))
+        timing.update({k: v for k, v in highlight.items() if k in timing or k == "timestamp_smoothing"})
+        highlight.update(timing)
     merged["highlight_detection"] = highlight
 
     rendering = dict(merged.get("rendering") or {})
@@ -166,6 +175,7 @@ def build_features_applied(config: dict[str, Any], report: dict[str, Any] | None
         or bool(viral.get("styled_ass_captions_enabled", False)),
         "whisper_transcription": bool((config.get("transcription") or {}).get("enabled", False)),
         "batch_queue": bool(optional.get("batch_queue", True)),
+        "industry_timing": bool((config.get("highlight_detection") or {}).get("industry_timing_enabled", False)),
         "direct_publish": bool((config.get("social_publish") or {}).get("enabled", False))
         and bool(optional.get("direct_publish", False)),
         "embedded_agent": bool((config.get("embedded_agent") or {}).get("enabled", False))

@@ -157,6 +157,10 @@ def _pick_impact_text(highlight: dict, categories: list[str], theme: str = "defa
     if breakdown.get("low_health_detected") or signals.get("low_health_detected"):
         return "CLUTCH"
 
+    ai_score = float(breakdown.get("ai_score", highlight.get("viral_score", 0)))
+    if ai_score >= 75 and any(cat.lower() in {"kills", "clutch plays", "high-action sequences"} for cat in categories):
+        return rng.choice(("INSANE", "CLUTCH", "HEADSHOT"))
+
     for category in categories:
         options = IMPACT_BY_CATEGORY.get(category.lower())
         if options:

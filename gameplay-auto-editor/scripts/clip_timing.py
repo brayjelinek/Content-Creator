@@ -2,6 +2,36 @@
 
 from __future__ import annotations
 
+INDUSTRY_TIMING_DEFAULTS = {
+    "industry_timing_enabled": True,
+    "clip_seconds_before": 0.65,
+    "clip_seconds_after": 1.1,
+    "timestamp_smoothing": {
+        "merge_seconds": 2.0,
+        "start_padding": 0.35,
+        "end_padding": 0.4,
+    },
+}
+
+
+def apply_timing_profile(config: dict | None) -> dict:
+    """Merge industry-standard lead/lag timing when enabled (Eklipse/Powder-style)."""
+    cfg = dict(config or {})
+    if not cfg.get("industry_timing_enabled", False):
+        return cfg
+
+    merged = dict(cfg)
+    merged["clip_seconds_before"] = float(cfg.get("clip_seconds_before", INDUSTRY_TIMING_DEFAULTS["clip_seconds_before"]))
+    merged["clip_seconds_after"] = float(cfg.get("clip_seconds_after", INDUSTRY_TIMING_DEFAULTS["clip_seconds_after"]))
+    smoothing = dict(cfg.get("timestamp_smoothing") or {})
+    defaults = INDUSTRY_TIMING_DEFAULTS["timestamp_smoothing"]
+    merged["timestamp_smoothing"] = {
+        "merge_seconds": float(smoothing.get("merge_seconds", defaults["merge_seconds"])),
+        "start_padding": float(smoothing.get("start_padding", defaults["start_padding"])),
+        "end_padding": float(smoothing.get("end_padding", defaults["end_padding"])),
+    }
+    return merged
+
 
 def compute_clip_range(
     timestamp: float,

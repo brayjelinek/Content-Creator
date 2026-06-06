@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Iterable, List
 
-from scripts.clip_timing import compute_clip_range
+from scripts.clip_timing import apply_timing_profile, compute_clip_range
 from scripts.ocr_utils import is_killfeed_scoring_enabled
 
 logger = logging.getLogger(__name__)
@@ -26,6 +26,7 @@ DEFAULT_WEIGHTS = {
 
 def detect_highlights(analyses: Iterable[dict], video_duration: float, config: dict) -> List[dict]:
     """Select highlight moments using weighted scoring and timestamp smoothing."""
+    config = apply_timing_profile(config)
     analyses = sorted(analyses, key=lambda item: float(item.get("timestamp", 0)))
     if not analyses:
         logger.warning("[HighlightDetector] No analyses available — cannot detect highlights.")

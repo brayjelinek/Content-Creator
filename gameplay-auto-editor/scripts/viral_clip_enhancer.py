@@ -16,7 +16,7 @@ from scripts.clip_cutter import (
     get_video_duration,
     probe_has_audio,
 )
-from scripts.moment_validator import is_validated_for_slowmo
+from scripts.moment_validator import is_validated_for_premium_effects, is_validated_for_slowmo
 from scripts.ass_captions import build_ass_subtitle_path, escape_ass_filter_path
 from scripts.render_settings import merge_render_config, resolve_font_path
 from scripts.text_utils import sanitize_overlay_text, wrap_overlay_text
@@ -29,16 +29,23 @@ DEFAULT_VIRAL_CONFIG: dict[str, Any] = {
     "slowmo_enabled": True,
     "slowmo_speed": 0.5,
     "slowmo_source_seconds": 0.45,
+    "slowmo_min_seconds": 0.3,
+    "slowmo_max_seconds": 0.6,
     "zoom_enabled": True,
-    "zoom_factor": 1.12,
-    "zoom_duration": 0.35,
+    "zoom_factor": 1.1,
+    "zoom_duration": 0.3,
     "audio_boost_db": 3,
-    "contrast_boost": 1.1,
-    "brightness_boost": 0.03,
+    "contrast_boost": 1.08,
+    "brightness_boost": 0.02,
     "screen_shake": False,
     "impact_text_enabled": True,
+    "impact_fade_in_seconds": 0.12,
+    "impact_fade_out_seconds": 0.25,
+    "impact_display_seconds": 1.2,
     "burn_captions_when_overlay_missing": True,
+    "always_burn_hook_text": False,
     "require_validation_for_slowmo": True,
+    "require_validation_for_effects": True,
     "min_validation_score": 45,
     "min_signal_count": 1,
     "sound_effects_enabled": False,
@@ -78,9 +85,11 @@ def enhance_rendered_clip(clip_path: str | Path, highlight: dict, render_config:
         return False
 
     use_slowmo = bool(viral.get("slowmo_enabled", True)) and is_validated_for_slowmo(highlight, viral)
+    use_premium = is_validated_for_premium_effects(highlight, viral)
     burn_captions = bool(
         viral.get("burn_captions_when_overlay_missing", True) and not highlight.get("overlay_applied", True)
     )
+    burn_hook = bool(viral.get("always_burn_hook_text", False)) or burn_captions
     impact_t = _impact_time_in_clip(highlight, duration)
     temp_output = clip_path.with_suffix(".viral.tmp.mp4")
 
@@ -94,23 +103,29 @@ def enhance_rendered_clip(clip_path: str | Path, highlight: dict, render_config:
             clip_duration=duration,
             impact_t=impact_t,
             use_slowmo=use_slowmo,
+            use_premium=use_premium,
             burn_captions=burn_captions,
+            burn_hook=burn_hook,
         )
         temp_output.replace(clip_path)
         highlight["viral_enhanced"] = True
         highlight["viral_slowmo_applied"] = use_slowmo
         highlight["viral_captions_burned"] = burn_captions
-        highlight["zoom_applied"] = bool(viral.get("zoom_enabled", True))
+        highlight["viral_hook_burned"] = burn_hook and burn_captions
+        highlight["zoom_applied"] = bool(viral.get("zoom_enabled", True)) and use_premium
+        highlight["impact_text_applied"] = bool(viral.get("impact_text_enabled", True)) and use_premium
+        highlight["moment_validated"] = use_premium
         if apply_styled_ass_captions(clip_path, highlight, settings, viral):
             highlight["viral_ass_captions_applied"] = True
         applied = []
         if burn_captions:
             applied.append("hook/caption overlays")
-        if viral.get("zoom_enabled", True):
+        if viral.get("zoom_enabled", True) and use_premium:
             applied.append("impact zoom")
-        if viral.get("impact_text_enabled", True):
+        if viral.get("impact_text_enabled", True) and use_premium:
             applied.append("impact text")
-        applied.append("contrast/audio polish")
+        if use_premium:
+            applied.append("contrast/audio polish")
         if use_slowmo:
             applied.append("pre-impact slow-mo")
         if highlight.get("viral_sound_effect_applied"):
@@ -142,7 +157,9 @@ def _render_enhanced_clip(
     clip_duration: float,
     impact_t: float,
     use_slowmo: bool,
+    use_premium: bool,
     burn_captions: bool,
+    burn_hook: bool,
 ) -> None:
     has_audio = probe_has_audio(input_path)
     sfx_path = _resolve_sound_effect_path(viral, settings)
@@ -154,7 +171,9 @@ def _render_enhanced_clip(
         viral=viral,
         include_audio=has_audio,
         use_slowmo=use_slowmo,
+        use_premium=use_premium,
         burn_captions=burn_captions,
+        burn_hook=burn_hook,
         sfx_input_index=1 if sfx_path else None,
     )
 
@@ -209,6 +228,8 @@ def _append_hook_and_caption_filters(
     filters: list[str],
     highlight: dict,
     settings: dict,
+    include_hook: bool = True,
+    include_caption: bool = True,
 ) -> None:
     width = int(settings["width"])
     height = int(settings["height"])
@@ -235,19 +256,23 @@ def _append_hook_and_caption_filters(
 
     hook_y = top_safe
     hook_line_gap = hook_font + 20
-    for line in hook_lines:
-        filters.append(
-            _build_drawtext_filter(
-                text=line,
-                font_size=hook_font,
-                y=hook_y,
-                x=_centered_x_expression(),
-                font_path=font_path,
-                box_color=box_color,
-                box_border=box_border,
+    if include_hook:
+        for line in hook_lines:
+            filters.append(
+                _build_drawtext_filter(
+                    text=line,
+                    font_size=hook_font,
+                    y=hook_y,
+                    x=_centered_x_expression(),
+                    font_path=font_path,
+                    box_color=box_color,
+                    box_border=box_border,
+                )
             )
-        )
-        hook_y += hook_line_gap
+            hook_y += hook_line_gap
+
+    if not include_caption:
+        return
 
     caption_line_gap = caption_font + 18
     caption_y_anchor = height - bottom_safe
@@ -280,7 +305,9 @@ def build_viral_filter_chain(
     viral: dict,
     include_audio: bool,
     use_slowmo: bool,
+    use_premium: bool,
     burn_captions: bool,
+    burn_hook: bool,
     sfx_input_index: int | None = None,
 ) -> str:
     width = int(settings["width"])
@@ -292,14 +319,19 @@ def build_viral_filter_chain(
     box_border = int(settings["text_box_border"])
 
     slow_src = float(viral.get("slowmo_source_seconds", 0.45))
+    slow_min = float(viral.get("slowmo_min_seconds", 0.3))
+    slow_max = float(viral.get("slowmo_max_seconds", 0.6))
+    slow_src = max(slow_min, min(slow_src, slow_max))
     slow_speed = max(0.25, min(float(viral.get("slowmo_speed", 0.5)), 1.0))
     pts_mult = 1.0 / slow_speed
 
     slow_start = max(0.0, impact_t - slow_src)
     slow_end = min(clip_duration, impact_t)
-    if slow_end - slow_start < 0.15:
-        slow_start = max(0.0, impact_t - 0.25)
+    if slow_end - slow_start < slow_min:
+        slow_start = max(0.0, impact_t - slow_min)
         slow_end = min(clip_duration, impact_t)
+    if slow_end - slow_start > slow_max:
+        slow_start = max(0.0, slow_end - slow_max)
 
     if use_slowmo and slow_end > slow_start + 0.08:
         output_impact = slow_start + ((slow_end - slow_start) * pts_mult)
@@ -316,30 +348,34 @@ def build_viral_filter_chain(
         slow_start = slow_end = 0.0
         video_chain = "[0:v]setpts=PTS[vcat]"
 
-    zoom_factor = float(viral.get("zoom_factor", 1.12))
-    zoom_duration = float(viral.get("zoom_duration", 0.35))
+    zoom_factor = float(viral.get("zoom_factor", 1.1))
+    zoom_duration = max(0.2, min(float(viral.get("zoom_duration", 0.3)), 0.4))
     zoom_end = output_impact + zoom_duration
 
-    contrast = float(viral.get("contrast_boost", 1.1))
-    brightness = float(viral.get("brightness_boost", 0.03))
+    contrast = float(viral.get("contrast_boost", 1.08))
+    brightness = float(viral.get("brightness_boost", 0.02))
     eq_end = output_impact + 0.5
 
-    if viral.get("zoom_enabled", True):
+    if viral.get("zoom_enabled", True) and use_premium:
+        zoom_delta = zoom_factor - 1.0
         video_chain += (
-            f";[vcat]zoompan=z='if(between(in_time\\,{output_impact:.3f}\\,{zoom_end:.3f})\\,{zoom_factor:.3f}\\,1)':"
+            f";[vcat]zoompan=z='if(between(in_time\\,{output_impact:.3f}\\,{zoom_end:.3f})\\,"
+            f"1+{zoom_delta:.4f}*(3*pow((in_time-{output_impact:.3f})/{zoom_duration:.3f}\\,2)"
+            f"-2*pow((in_time-{output_impact:.3f})/{zoom_duration:.3f}\\,3))\\,1)':"
             f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s={width}x{height}:fps=30[vzoom]"
         )
         last_video = "[vzoom]"
     else:
         last_video = "[vcat]"
 
-    video_chain += (
-        f";{last_video}eq=contrast={contrast:.3f}:brightness={brightness:.3f}:"
-        f"enable='between(t,{output_impact:.3f},{eq_end:.3f})'[veq]"
-    )
-    last_video = "[veq]"
+    if use_premium:
+        video_chain += (
+            f";{last_video}eq=contrast={contrast:.3f}:brightness={brightness:.3f}:"
+            f"enable='between(t,{output_impact:.3f},{eq_end:.3f})'[veq]"
+        )
+        last_video = "[veq]"
 
-    if viral.get("screen_shake", False):
+    if viral.get("screen_shake", False) and use_premium:
         shake_end = output_impact + 0.25
         video_chain += (
             f";{last_video}crop={width}:{height}:"
@@ -349,20 +385,36 @@ def build_viral_filter_chain(
         last_video = "[vshake]"
 
     draw_filters: list[str] = []
-    if burn_captions:
-        _append_hook_and_caption_filters(filters=draw_filters, highlight=highlight, settings=settings)
+    if burn_captions or burn_hook:
+        _append_hook_and_caption_filters(
+            filters=draw_filters,
+            highlight=highlight,
+            settings=settings,
+            include_hook=bool(burn_hook or burn_captions),
+            include_caption=bool(burn_captions),
+        )
 
-    if viral.get("impact_text_enabled", True):
+    if viral.get("impact_text_enabled", True) and use_premium:
         impact_label = sanitize_overlay_text(str(highlight.get("impact_text") or "INSANE").upper())
         impact_y = height - bottom_safe - caption_font - 20
         font_opt = f"fontfile={format_font_path(font_path)}:" if font_path else ""
         impact_start = output_impact
-        impact_end = min(output_impact + 1.4, clip_duration + 2.5)
+        display = float(viral.get("impact_display_seconds", 1.2))
+        fade_in = max(0.05, float(viral.get("impact_fade_in_seconds", 0.12)))
+        fade_out = max(0.05, float(viral.get("impact_fade_out_seconds", 0.25)))
+        impact_end = min(output_impact + display, clip_duration + 2.5)
+        fade_in_end = impact_start + fade_in
+        fade_out_start = max(fade_in_end, impact_end - fade_out)
+        alpha_expr = (
+            f"if(lt(t\\,{fade_in_end:.3f})\\,(t-{impact_start:.3f})/{fade_in:.3f}\\,"
+            f"if(gt(t\\,{fade_out_start:.3f})\\,({impact_end:.3f}-t)/{fade_out:.3f}\\,1))"
+        )
         draw_filters.append(
             f"drawtext={font_opt}"
             f'text="{impact_label}":fontsize={caption_font}:fontcolor=white:'
             f"box=1:boxcolor={box_color}:boxborderw={box_border}:"
             f"x=(w-text_w)/2:y={impact_y}:"
+            f"alpha='{alpha_expr}':"
             f"enable='between(t,{impact_start:.3f},{impact_end:.3f})'"
         )
 
@@ -385,14 +437,22 @@ def build_viral_filter_chain(
             f"[apre]atrim=0:{slow_start:.3f},asetpts=PTS-STARTPTS[a1];"
             f"[aslow]atrim={slow_start:.3f}:{slow_end:.3f},volume=0[a2];"
             f"[apost]atrim={slow_end:.3f},asetpts=PTS-STARTPTS[a3];"
-            f"[a1][a2][a3]concat=n=3:v=0:a=1[acat];"
-            f"[acat]volume={audio_boost:.1f}dB:enable='between(t,{output_impact:.3f},{boost_end:.3f})'[aboost]"
+            f"[a1][a2][a3]concat=n=3:v=0:a=1[acat]"
         )
+        if use_premium:
+            audio_chain += (
+                f";[acat]volume={audio_boost:.1f}dB:enable='between(t,{output_impact:.3f},{boost_end:.3f})'[aboost]"
+            )
+        else:
+            audio_chain += ";[acat]anull[aboost]"
     else:
-        audio_chain = (
-            f"[0:a]aformat=sample_rates=48000:channel_layouts=stereo[acat];"
-            f"[acat]volume={audio_boost:.1f}dB:enable='between(t,{output_impact:.3f},{boost_end:.3f})'[aboost]"
-        )
+        audio_chain = f"[0:a]aformat=sample_rates=48000:channel_layouts=stereo[acat]"
+        if use_premium:
+            audio_chain += (
+                f";[acat]volume={audio_boost:.1f}dB:enable='between(t,{output_impact:.3f},{boost_end:.3f})'[aboost]"
+            )
+        else:
+            audio_chain += ";[acat]anull[aboost]"
 
     if sfx_input_index is not None:
         highlight["viral_sound_effect_applied"] = True
