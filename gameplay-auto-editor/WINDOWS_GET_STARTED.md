@@ -66,6 +66,9 @@ Install these once on Windows if the app asks:
    - During install, check **Add Python to PATH**
 2. **FFmpeg** from https://www.gyan.dev/ffmpeg/builds/
    - Or install with winget: `winget install Gyan.FFmpeg`
+3. **Tesseract OCR** (optional, for killfeed detection) from https://github.com/UB-Mannheim/tesseract/wiki
+   - Default install path: `C:/Program Files/Tesseract-OCR/tesseract.exe`
+   - Clips still generate without it — OCR adds better kill/multi-kill detection when installed
 
 ## If you prefer the packaged app instead
 

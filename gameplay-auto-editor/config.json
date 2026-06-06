@@ -16,6 +16,11 @@
       "max_samples": 60
     }
   },
+  "ocr": {
+    "enabled": true,
+    "tesseract_path": "C:/Program Files/Tesseract-OCR/tesseract.exe",
+    "install_url": "https://github.com/UB-Mannheim/tesseract/wiki"
+  },
   "highlight_detection": {
     "max_clips": 5,
     "min_score": 60,

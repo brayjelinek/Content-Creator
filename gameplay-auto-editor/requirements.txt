@@ -4,3 +4,5 @@ openai
 anthropic
 streamlit
 python-dotenv
+pytesseract
+pillow

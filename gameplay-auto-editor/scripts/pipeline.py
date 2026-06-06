@@ -19,6 +19,7 @@ from scripts.frame_extractor import extract_frames
 from scripts.highlight_detector import detect_highlights
 from scripts.logging_utils import setup_pipeline_logging
 from scripts.microclip_sampler import extract_microclips
+from scripts.ocr_utils import initialize_ocr
 from scripts.vision_analyzer import VisionAnalyzer
 
 logger = logging.getLogger(__name__)
@@ -70,6 +71,8 @@ def run_pipeline(
         message = "; ".join(preflight["errors"])
         logger.error("[Pipeline] Preflight failed: %s", message)
         raise RuntimeError(message)
+
+    initialize_ocr(config.get("ocr", {}))
 
     frame_dir = paths["processed"] / "frames" / video_stem
     report_dir = paths["processed"] / "reports"

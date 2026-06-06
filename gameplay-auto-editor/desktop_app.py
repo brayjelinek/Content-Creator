@@ -52,6 +52,7 @@ class GameplayAutoEditorApp:
         self.status_var = StringVar(value="Choose a gameplay video to begin.")
         self.openai_key_var = StringVar(value="")
         self.key_status_var = StringVar(value=self._api_key_status())
+        self.ocr_status_var = StringVar(value=self._ocr_status())
 
         self._build_ui()
         self._poll_output_queue()
@@ -103,6 +104,15 @@ class GameplayAutoEditorApp:
         ttk.Label(api_row, text="OpenAI API key").pack(side=LEFT)
         ttk.Entry(api_row, textvariable=self.openai_key_var, show="*", width=58).pack(side=LEFT, padx=8)
         ttk.Button(api_row, text="Save key", command=self.save_openai_key).pack(side=LEFT)
+
+        ocr_frame = ttk.LabelFrame(outer, text="Optional: Killfeed OCR (Tesseract)", padding=10)
+        ocr_frame.pack(fill="x", pady=(0, 12))
+        ttk.Label(ocr_frame, textvariable=self.ocr_status_var, wraplength=960).pack(anchor=W)
+        ttk.Label(
+            ocr_frame,
+            text="Install Tesseract for killfeed detection: https://github.com/UB-Mannheim/tesseract/wiki",
+            wraplength=960,
+        ).pack(anchor=W, pady=(4, 0))
 
         progress = ttk.LabelFrame(outer, text="2. Progress", padding=10)
         progress.pack(fill="x", pady=(0, 12))
@@ -349,6 +359,20 @@ class GameplayAutoEditorApp:
                 "min_score": int(self.min_score_var.get()),
             },
         }
+
+    def _ocr_status(self) -> str:
+        try:
+            from scripts.ocr_utils import initialize_ocr
+
+            status = initialize_ocr(load_config().get("ocr", {}))
+            if status.get("available"):
+                return f"Killfeed OCR ready: {status.get('tesseract_path')}"
+            return (
+                "Killfeed OCR not installed. Clips still generate without it. "
+                "Install from https://github.com/UB-Mannheim/tesseract/wiki"
+            )
+        except Exception:  # noqa: BLE001
+            return "Killfeed OCR status unknown. Clips still generate without it."
 
     def _initial_provider(self) -> str:
         try:

@@ -14,9 +14,9 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-logger = logging.getLogger(__name__)
+from scripts.ocr_utils import read_killfeed_region
 
-KILLFEED_KEYWORDS = ("eliminated", "killed", "knocked", "headshot", "assist", "elim")
+logger = logging.getLogger(__name__)
 
 
 def analyze_microclip_signals(
@@ -30,6 +30,7 @@ def analyze_microclip_signals(
         "hitmarker_detected": False,
         "killfeed_ocr_match": False,
         "killfeed_ocr_text": "",
+        "killfeed_ocr_keyword": None,
         "low_health_detected": False,
     }
 
@@ -55,9 +56,11 @@ def analyze_microclip_signals(
             logger.debug("[GameplaySignals] hitmarker failed for %s: %s", clip_path.name, exc)
 
         try:
-            ocr_text, matched = _killfeed_ocr(frame_path)
-            signals["killfeed_ocr_text"] = ocr_text
-            signals["killfeed_ocr_match"] = matched
+            ocr_result = read_killfeed_region(frame_path)
+            if ocr_result:
+                signals["killfeed_ocr_text"] = ocr_result.get("text", "")
+                signals["killfeed_ocr_match"] = bool(ocr_result.get("matched", False))
+                signals["killfeed_ocr_keyword"] = ocr_result.get("keyword")
         except Exception as exc:  # noqa: BLE001
             logger.debug("[GameplaySignals] killfeed OCR failed for %s: %s", clip_path.name, exc)
 
@@ -162,24 +165,6 @@ def _detect_hitmarker_flash(clip_path: Path) -> bool:
         previous_center = gray
     cap.release()
     return flash_detected
-
-
-def _killfeed_ocr(frame_path: Path) -> tuple[str, bool]:
-    try:
-        import pytesseract  # type: ignore[import-not-found]
-    except ImportError:
-        return "", False
-
-    frame = cv2.imread(str(frame_path))
-    if frame is None:
-        return "", False
-
-    height, width = frame.shape[:2]
-    crop = frame[0 : int(height * 0.28), int(width * 0.55) : width]
-    gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
-    text = pytesseract.image_to_string(gray, config="--psm 6").strip().lower()
-    matched = any(keyword in text for keyword in KILLFEED_KEYWORDS)
-    return text[:120], matched
 
 
 def _detect_low_health(frame_path: Path) -> bool:

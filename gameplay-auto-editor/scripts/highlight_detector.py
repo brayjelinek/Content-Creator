@@ -176,6 +176,8 @@ def _log_sample_scores(item: dict, breakdown: dict) -> None:
     )
     if signals.get("killfeed_ocr_text"):
         logger.info("[HighlightDetector]   killfeed OCR: %s", signals["killfeed_ocr_text"])
+    if signals.get("killfeed_ocr_keyword"):
+        logger.info("[HighlightDetector]   killfeed keyword: %s (+40 bonus)", signals["killfeed_ocr_keyword"])
 
 
 def _pick_spaced_top_samples(ranked: List[dict], max_clips: int, merge_distance: float) -> List[dict]:
