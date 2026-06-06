@@ -22,7 +22,7 @@ from scripts.clip_cutter import (
 from scripts.moment_validator import is_synthetic_fallback_highlight, is_validated_for_premium_effects, is_validated_for_slowmo
 from scripts.pipeline_validation import validate_filter_chain_ready, validate_font_path
 from scripts.ass_captions import build_ass_subtitle_path, escape_ass_filter_path
-from scripts.render_settings import merge_render_config, resolve_font_path
+from scripts.render_settings import merge_render_config, overlay_font_reference, ffmpeg_workdir, resolve_font_path
 from scripts.text_utils import sanitize_overlay_text, wrap_overlay_text
 
 logger = logging.getLogger(__name__)
@@ -317,9 +317,10 @@ def _run_ffmpeg_enhance(
     has_audio: bool,
     sfx_path: Path | None,
 ) -> None:
-    font_path = resolve_font_path(settings.get("font_candidates"))
+    font_path = overlay_font_reference(settings)
     if "drawtext=" in filter_chain:
-        validate_font_path(font_path)
+        local_font = ffmpeg_workdir(settings) / "fonts" / "overlay.ttf"
+        validate_font_path(str(local_font))
         validate_filter_chain_ready(filter_chain)
     command = [
         "ffmpeg",
@@ -354,7 +355,7 @@ def _run_ffmpeg_enhance(
                 str(output_path),
             ]
         )
-        result = run_quiet(command, filter_chain=filter_chain)
+        result = run_quiet(command, filter_chain=filter_chain, cwd=ffmpeg_workdir(settings))
         if result.returncode != 0:
             raise RuntimeError(result.stderr.strip() or "FFmpeg enhancement failed")
         if not output_path.exists() or output_path.stat().st_size <= 0:
@@ -408,12 +409,12 @@ def build_baseline_polish_chain(
         height = int(settings["height"])
         bottom_safe = int(settings["bottom_safe_zone"])
         caption_font = int(settings.get("impact_font_size", 72))
-        font_path = resolve_font_path(settings.get("font_candidates"))
+        font_path = overlay_font_reference(settings)
         box_color = str(settings["text_box_color"])
         box_border = int(settings["text_box_border"])
         impact_label = sanitize_overlay_text(str(highlight.get("impact_text") or "INSANE").upper())
         impact_y = height - bottom_safe - caption_font - 20
-        font_opt = f"fontfile={format_font_path(font_path)}:" if font_path else ""
+        font_opt = f"fontfile={font_path}:" if font_path else ""
         impact_end = min(impact_t + float(viral.get("impact_display_seconds", 1.2)), clip_duration + 1.0)
         draw_filters.append(
             f"drawtext={font_opt}"
@@ -457,7 +458,7 @@ def _append_hook_and_caption_filters(
     caption_font = int(settings["caption_font_size"])
     box_color = str(settings["text_box_color"])
     box_border = int(settings["text_box_border"])
-    font_path = resolve_font_path(settings.get("font_candidates"))
+    font_path = overlay_font_reference(settings)
 
     hook_text = sanitize_overlay_text(highlight.get("hook_text") or "Watch this...")
     caption_lines = highlight.get("caption_lines") or wrap_overlay_text(
@@ -531,7 +532,7 @@ def build_viral_filter_chain(
     height = int(settings["height"])
     bottom_safe = int(settings["bottom_safe_zone"])
     caption_font = int(settings.get("impact_font_size", 72))
-    font_path = resolve_font_path(settings.get("font_candidates"))
+    font_path = overlay_font_reference(settings)
     box_color = str(settings["text_box_color"])
     box_border = int(settings["text_box_border"])
 
@@ -614,7 +615,7 @@ def build_viral_filter_chain(
     if viral.get("impact_text_enabled", True) and (use_premium or burn_captions):
         impact_label = sanitize_overlay_text(str(highlight.get("impact_text") or "INSANE").upper())
         impact_y = height - bottom_safe - caption_font - 20
-        font_opt = f"fontfile={format_font_path(font_path)}:" if font_path else ""
+        font_opt = f"fontfile={font_path}:" if font_path else ""
         impact_start = output_impact
         display = float(viral.get("impact_display_seconds", 1.2))
         fade_in = max(0.05, float(viral.get("impact_fade_in_seconds", 0.12)))

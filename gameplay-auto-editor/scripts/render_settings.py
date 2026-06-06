@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+import logging
+import os
+import shutil
 import sys
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 OUTPUT_WIDTH = 1080
@@ -132,7 +137,67 @@ def merge_render_config(config: dict | None) -> dict[str, Any]:
     viral.update(theme_viral)
     if viral:
         merged["viral_enhancements"] = viral
+
+    font_rel, workdir = prepare_overlay_font(merged.get("font_candidates"))
+    merged["_overlay_font_rel"] = font_rel
+    merged["_ffmpeg_workdir"] = str(workdir)
     return merged
+
+
+def _writable_app_root() -> Path:
+    """Return a writable app root (user data dir when frozen, repo root in dev)."""
+    if getattr(sys, "frozen", False):
+        app_dir_name = "GameplayAutoEditor"
+        if sys.platform.startswith("win"):
+            base = Path(os.getenv("LOCALAPPDATA") or Path.home() / "AppData" / "Local")
+        elif sys.platform == "darwin":
+            base = Path.home() / "Library" / "Application Support"
+        else:
+            base = Path(os.getenv("XDG_DATA_HOME") or Path.home() / ".local" / "share")
+        path = base / app_dir_name
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+    return Path(__file__).resolve().parents[1]
+
+
+def prepare_overlay_font(candidates: list[str] | None = None) -> tuple[str, Path]:
+    """Copy a usable font to fonts/overlay.ttf and return a colon-free relative FFmpeg path.
+
+    Windows FFmpeg drawtext treats ':' as a filter separator. Absolute paths like
+    C:/Windows/Fonts/arial.ttf break overlay rendering with 'Could not load font C'.
+    Using a project-relative path plus ffmpeg cwd avoids that entire class of failures.
+    """
+    source = resolve_font_path(candidates)
+    if not source:
+        raise FileNotFoundError(
+            "No overlay font found. Install Arial/DejaVu or bundle fonts/DejaVuSans-Bold.ttf."
+        )
+
+    workdir = _writable_app_root()
+    fonts_dir = workdir / "fonts"
+    fonts_dir.mkdir(parents=True, exist_ok=True)
+    local_font = fonts_dir / "overlay.ttf"
+    source_path = Path(source)
+
+    if not local_font.exists() or local_font.stat().st_mtime < source_path.stat().st_mtime:
+        shutil.copy2(source_path, local_font)
+        logger.info("[Render] Prepared overlay font at %s (from %s)", local_font, source_path)
+
+    return "fonts/overlay.ttf", workdir
+
+
+def ffmpeg_workdir(settings: dict | None = None) -> Path:
+    """Resolve the working directory FFmpeg should use for relative font paths."""
+    if settings and settings.get("_ffmpeg_workdir"):
+        return Path(str(settings["_ffmpeg_workdir"]))
+    return _writable_app_root()
+
+
+def overlay_font_reference(settings: dict | None = None) -> str:
+    """Return the drawtext fontfile value (always colon-free)."""
+    if settings and settings.get("_overlay_font_rel"):
+        return str(settings["_overlay_font_rel"])
+    return prepare_overlay_font((settings or {}).get("font_candidates"))[0]
 
 
 def _bundled_font_candidates() -> list[str]:

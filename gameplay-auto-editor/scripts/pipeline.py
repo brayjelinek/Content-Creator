@@ -341,6 +341,8 @@ def _execute_pipeline(
         except Exception as exc:  # noqa: BLE001 - enhancement must never break pipeline
             logger.warning("[Enhancer] Skipped enhancement for %s: %s", clip.get("id"), exc)
 
+    _log_clip_enhancement_summary(rendered, progress_callback)
+
     emit_progress(
         progress_callback,
         stage=STAGE_FINALIZING,
@@ -566,6 +568,40 @@ def _persist_clip_sidecar(clip: dict) -> None:
         if key not in {"processed_clip"}
     }
     meta_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+def _log_clip_enhancement_summary(rendered: list[dict], progress_callback: ProgressCallback | None) -> None:
+    """Emit a human-readable per-clip edit report for troubleshooting."""
+    if not rendered:
+        logger.warning("[Pipeline] Enhancement summary: no clips rendered")
+        return
+
+    for clip in rendered:
+        name = Path(str(clip.get("final_clip", "clip"))).name
+        flags = []
+        if clip.get("overlay_applied") or clip.get("text_overlay_recovered") or clip.get("viral_captions_burned"):
+            flags.append("text overlays")
+        if clip.get("viral_slowmo_applied"):
+            flags.append("slow-mo")
+        if clip.get("zoom_applied"):
+            flags.append("zoom")
+        if clip.get("impact_text_applied"):
+            flags.append("impact text")
+        if clip.get("viral_enhanced"):
+            flags.append("viral polish")
+
+        if flags:
+            message = f"[Pipeline] {name}: edits applied — {', '.join(flags)}"
+            logger.info(message)
+            emit_ui_notice(progress_callback, message.replace("[Pipeline] ", "[UI] "))
+        else:
+            reason = clip.get("overlay_error") or "no enhancer flags set"
+            message = f"[Pipeline] {name}: NO EDITS APPLIED ({reason})"
+            logger.warning(message)
+            emit_ui_notice(progress_callback, f"[UI] {name}: plain clip only — check log for FFmpeg/Enhancer errors")
+
+    applied = sum(1 for clip in rendered if clip.get("viral_enhanced") or clip.get("overlay_applied"))
+    logger.info("[Pipeline] Enhancement summary: %s/%s clip(s) have baked edits", applied, len(rendered))
 
 
 def _summarize_run_enhancements(clips: list[dict]) -> dict[str, int]:

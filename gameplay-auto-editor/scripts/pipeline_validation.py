@@ -6,7 +6,7 @@ import logging
 import shutil
 from pathlib import Path
 
-from scripts.render_settings import merge_render_config, resolve_font_path
+from scripts.render_settings import merge_render_config, prepare_overlay_font
 from scripts.text_utils import validate_filter_chain
 
 logger = logging.getLogger(__name__)
@@ -57,8 +57,14 @@ def preflight_pipeline(
         checks["opencv"] = False
         errors.append("OpenCV (cv2) is not installed.")
 
-    font_path = resolve_font_path(settings.get("font_candidates"))
-    checks["font"] = bool(font_path) and Path(font_path).exists()
+    try:
+        font_rel, workdir = prepare_overlay_font(settings.get("font_candidates"))
+        local_font = workdir / Path(font_rel)
+        checks["font"] = local_font.exists()
+        font_path = str(local_font.resolve()) if checks["font"] else ""
+    except FileNotFoundError:
+        checks["font"] = False
+        font_path = ""
     if not checks["font"]:
         errors.append(
             "No overlay font found. Install Arial/DejaVu or update font_candidates in config.json."

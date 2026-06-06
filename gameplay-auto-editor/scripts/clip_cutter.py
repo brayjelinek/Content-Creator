@@ -18,7 +18,7 @@ from scripts.pipeline_validation import (
     validate_output_file_exists,
     validate_processed_clip_exists,
 )
-from scripts.render_settings import OUTPUT_WIDTH, merge_render_config, resolve_font_path
+from scripts.render_settings import OUTPUT_WIDTH, merge_render_config, overlay_font_reference, ffmpeg_workdir
 from scripts.smart_reframe import apply_smart_reframe, merge_reframe_settings
 from scripts.subprocess_utils import run_quiet
 from scripts.text_utils import sanitize_overlay_text, wrap_overlay_text
@@ -129,6 +129,12 @@ def process_single_highlight(
             video_duration=video_duration,
         )
         overlay_applied = True
+        if not verify_overlay_present(final_path):
+            logger.warning(
+                "[FFmpeg] Overlay render succeeded but no text detected in %s — retrying text burn",
+                final_path.name,
+            )
+            overlay_applied = _recover_text_overlays_on_clip(final_path, highlight, render_settings, "overlay_not_visible")
     except Exception as exc:
         overlay_error = str(exc)
         logger.error("[FFmpeg] Overlay render failed for %s: %s", highlight.get("id"), exc)
@@ -197,14 +203,14 @@ def apply_text_overlays_to_clip(
     input_path = Path(input_path)
     output_path = Path(output_path)
     settings = merge_render_config(render_config)
-    font_path = resolve_font_path(settings.get("font_candidates"))
+    local_font = ffmpeg_workdir(settings) / "fonts" / "overlay.ttf"
     filter_chain = build_vertical_filter_chain(
         hook_text=highlight.get("hook_text", "Wait for it"),
         caption_text=highlight.get("caption_text", highlight.get("summary", "")),
         caption_lines=highlight.get("caption_lines"),
         settings=settings,
     )
-    validate_font_path(font_path)
+    validate_font_path(str(local_font))
     validate_filter_chain_ready(filter_chain)
     _execute_vertical_render(
         input_path=input_path,
@@ -277,7 +283,7 @@ def render_vertical_clip(
     input_path = Path(input_path)
     output_path = Path(output_path)
     settings = merge_render_config(render_config)
-    font_path = resolve_font_path(settings.get("font_candidates"))
+    local_font = ffmpeg_workdir(settings) / "fonts" / "overlay.ttf"
 
     filter_chain = build_vertical_filter_chain(
         hook_text=highlight.get("hook_text", "Wait for it"),
@@ -293,8 +299,9 @@ def render_vertical_clip(
     logger.info("[FFmpeg] Input file exists: %s", input_path)
     logger.info("[FFmpeg] Output path: %s", output_path)
     logger.info("[FFmpeg] Filter chain: %s", filter_chain)
+    logger.info("[FFmpeg] Overlay font: %s (cwd=%s)", overlay_font_reference(settings), ffmpeg_workdir(settings))
 
-    validate_font_path(font_path)
+    validate_font_path(str(local_font))
     validate_filter_chain_ready(filter_chain)
     if video_duration is not None:
         validate_highlight_timestamps(highlight, video_duration)
@@ -358,7 +365,7 @@ def build_vertical_filter_chain(
     caption_font = int(cfg["caption_font_size"])
     box_color = str(cfg["text_box_color"])
     box_border = int(cfg["text_box_border"])
-    font_path = resolve_font_path(cfg.get("font_candidates"))
+    font_path = overlay_font_reference(cfg)
     side_safe = int(cfg["side_safe_zone"])
 
     filters: list[str] = []
@@ -474,7 +481,7 @@ def _build_drawtext_filter(
     options: list[str] = []
 
     if font_path:
-        options.append(f"fontfile={format_font_path(font_path)}")
+        options.append(f"fontfile={font_path}")
 
     options.extend(
         [
@@ -493,11 +500,40 @@ def _build_drawtext_filter(
 
 
 def format_font_path(path: str) -> str:
-    """Format font paths with forward slashes and escaped drive-letter colons."""
+    """Format font paths for drawtext — relative paths are returned unchanged."""
+    if not path or ":" not in path and not path.startswith("/"):
+        return path
     normalized = Path(path).as_posix()
     if len(normalized) >= 2 and normalized[1] == ":":
         return f"{normalized[0]}\\:{normalized[2:]}"
     return normalized
+
+
+def verify_overlay_present(video_path: str | Path) -> bool:
+    """Heuristic check that hook/caption boxes were burned into the frame."""
+    try:
+        import cv2
+        import numpy as np
+
+        cap = cv2.VideoCapture(str(video_path))
+        if not cap.isOpened():
+            return False
+        ok, frame = cap.read()
+        cap.release()
+        if not ok or frame is None:
+            return False
+
+        height = frame.shape[0]
+        top_band = frame[0 : max(int(height * 0.16), 1), :]
+        bottom_band = frame[max(int(height * 0.78), 0) :, :]
+        gray_top = cv2.cvtColor(top_band, cv2.COLOR_BGR2GRAY)
+        gray_bottom = cv2.cvtColor(bottom_band, cv2.COLOR_BGR2GRAY)
+        top_dark = float(np.mean(gray_top < 70))
+        bottom_dark = float(np.mean(gray_bottom < 70))
+        return top_dark > 0.04 or bottom_dark > 0.04
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("[Validation] Overlay visibility check skipped: %s", exc)
+        return True
 
 
 def _execute_vertical_render(
@@ -539,7 +575,8 @@ def _execute_vertical_render(
     try:
         logger.info("[FFmpeg] Running command: %s", " ".join(command))
         logger.info("[FFmpeg] Filter script file: %s", filter_script)
-        _run_ffmpeg(command, stage=stage, filter_chain=filter_chain)
+        workdir = ffmpeg_workdir(settings)
+        _run_ffmpeg(command, stage=stage, filter_chain=filter_chain, cwd=workdir)
         validate_output_file_exists(output_path)
     except Exception as exc:
         logger.error("[FFmpeg] Render failed during %s: %s", stage, exc)
@@ -699,9 +736,10 @@ def _run_ffmpeg(
     *,
     stage: str,
     filter_chain: str | None = None,
+    cwd: Path | None = None,
 ) -> subprocess.CompletedProcess:
     """Run FFmpeg/ffprobe and include command and filter details on failure."""
-    result = run_quiet(command, stage=stage, filter_chain=filter_chain)
+    result = run_quiet(command, stage=stage, filter_chain=filter_chain, cwd=cwd)
     if result.returncode != 0:
         details = [
             f"FFmpeg stage failed: {stage}",

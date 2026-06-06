@@ -67,6 +67,7 @@ def run_quiet(
     check: bool = False,
     stage: str = "",
     filter_chain: str | None = None,
+    cwd: str | Path | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Run a subprocess with stdout/stderr captured and no console window."""
     quiet_command = inject_quiet_flags(list(command))
@@ -76,6 +77,8 @@ def run_quiet(
         "check": check,
         "stdin": subprocess.DEVNULL,
     }
+    if cwd is not None:
+        kwargs["cwd"] = str(cwd)
     if sys.platform.startswith("win"):
         kwargs["creationflags"] = _windows_creationflags()
 
