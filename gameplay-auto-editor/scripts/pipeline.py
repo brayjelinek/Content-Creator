@@ -8,7 +8,7 @@ import logging
 import os
 import sys
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Callable, Dict
 
 from dotenv import load_dotenv
 
@@ -20,9 +20,24 @@ from scripts.highlight_detector import detect_highlights
 from scripts.logging_utils import setup_pipeline_logging
 from scripts.microclip_sampler import extract_microclips
 from scripts.ocr_utils import initialize_ocr
+from scripts.ui_events import (
+    STAGE_DETECTING,
+    STAGE_EXTRACTING,
+    STAGE_FINALIZING,
+    STAGE_LOADING,
+    STAGE_MICROCLIPS,
+    STAGE_RENDERING,
+    emit_clips_ready,
+    emit_highlights_detected,
+    emit_progress,
+    emit_ui_notice,
+    resolve_clip_paths,
+)
 from scripts.vision_analyzer import VisionAnalyzer
 
 logger = logging.getLogger(__name__)
+
+ProgressCallback = Callable[[dict[str, Any]], None]
 
 
 def _user_data_dir() -> Path:
@@ -53,6 +68,7 @@ def run_pipeline(
     video_path: str | Path,
     config_path: str | Path | None = None,
     config_override: dict | None = None,
+    progress_callback: ProgressCallback | None = None,
 ) -> dict:
     """Run the full clip generation workflow for one input video."""
     config = load_config(config_path)
@@ -60,11 +76,25 @@ def run_pipeline(
         config = _deep_merge(config, config_override)
 
     paths = ensure_project_dirs()
+    emit_progress(
+        progress_callback,
+        stage=STAGE_LOADING,
+        percent=2,
+        message="Preparing workspace and output folders...",
+    )
+
     input_video = resolve_video_path(video_path)
     video_stem = input_video.stem
 
     log_path = setup_pipeline_logging(paths["logs"], video_stem)
     logger.info("[Pipeline] Writing logs to %s", log_path)
+
+    emit_progress(
+        progress_callback,
+        stage=STAGE_LOADING,
+        percent=5,
+        message=f"Loading video: {input_video.name}",
+    )
 
     preflight = preflight_pipeline(input_video, config.get("rendering", {}))
     if not preflight["ok"]:
@@ -72,7 +102,9 @@ def run_pipeline(
         logger.error("[Pipeline] Preflight failed: %s", message)
         raise RuntimeError(message)
 
-    initialize_ocr(config.get("ocr", {}))
+    ocr_status = initialize_ocr(config.get("ocr", {}))
+    if not ocr_status.get("available"):
+        emit_ui_notice(progress_callback, "[UI] OCR unavailable — skipping")
 
     frame_dir = paths["processed"] / "frames" / video_stem
     report_dir = paths["processed"] / "reports"
@@ -87,6 +119,7 @@ def run_pipeline(
         frame_dir=frame_dir,
         vision_config=vision_config,
         microclip_config=microclip_config,
+        progress_callback=progress_callback,
     )
     if not samples:
         logger.error("[Pipeline] No samples extracted — check that the input is a valid video file.")
@@ -96,6 +129,12 @@ def run_pipeline(
     logger.info("[Pipeline] Extracted %s %s sample(s) from %s", len(samples), sample_label, input_video.name)
 
     provider = vision_config.get("provider", "heuristic")
+    emit_progress(
+        progress_callback,
+        stage=STAGE_DETECTING,
+        percent=35,
+        message=f"Analyzing {len(samples)} sample(s) with {provider} vision...",
+    )
     if provider == "heuristic":
         logger.info("[Pipeline] Running heuristic analysis...")
     else:
@@ -104,10 +143,21 @@ def run_pipeline(
     analyses = analyzer.analyze_samples(samples)
     _write_json(report_dir / f"{video_stem}_analysis.json", analyses)
 
+    ai_fallbacks = sum(1 for item in analyses if item.get("provider_error"))
+    if ai_fallbacks:
+        emit_ui_notice(progress_callback, "[UI] AI scoring failed — fallback to heuristic")
+
     duration = get_video_duration(input_video)
     logger.info("[Pipeline] Video duration: %.2fs", duration)
+    emit_progress(
+        progress_callback,
+        stage=STAGE_DETECTING,
+        percent=50,
+        message="Scoring highlight moments...",
+    )
     highlights = detect_highlights(analyses, duration, config.get("highlight_detection", {}))
     logger.info("[Pipeline] Highlights detected: %s", len(highlights))
+    emit_highlights_detected(progress_callback, count=len(highlights), percent=55)
 
     if not highlights:
         logger.warning("[Pipeline] No highlights detected — stopping before render.")
@@ -119,10 +169,13 @@ def run_pipeline(
             "highlights_detected": 0,
             "clips_created": 0,
             "clips": [],
+            "clips_ready": [],
+            "output_dir": str(paths["final"].resolve()),
             "log_file": str(log_path),
             "failure_reason": "no_highlights",
         }
         _write_json(report_dir / f"{video_stem}_run_report.json", report)
+        emit_clips_ready(progress_callback, clip_paths=[], clips=[], percent=100)
         logger.warning("[Pipeline] Final clips generated: 0")
         logger.warning("[Pipeline] No clips were generated — check logs above.")
         return report
@@ -137,6 +190,12 @@ def run_pipeline(
             float(highlight.get("end", 0)),
         )
 
+    emit_progress(
+        progress_callback,
+        stage=STAGE_RENDERING,
+        percent=60,
+        message="Generating hooks and captions...",
+    )
     logger.info("[Pipeline] Generating hooks and captions")
     captioned_highlights = generate_captions(
         highlights,
@@ -146,6 +205,13 @@ def run_pipeline(
     )
     _write_json(report_dir / f"{video_stem}_highlights.json", captioned_highlights)
 
+    paths["final"].mkdir(parents=True, exist_ok=True)
+    emit_progress(
+        progress_callback,
+        stage=STAGE_RENDERING,
+        percent=65,
+        message=f"Rendering {len(captioned_highlights)} clip(s) with FFmpeg...",
+    )
     logger.info("[Pipeline] Starting clip rendering...")
     rendered = process_highlights(
         video_path=input_video,
@@ -162,6 +228,12 @@ def run_pipeline(
             clip.get("score"),
         )
 
+    emit_progress(
+        progress_callback,
+        stage=STAGE_FINALIZING,
+        percent=95,
+        message="Finalizing output files...",
+    )
     logger.info("[Pipeline] Final clips generated: %s", len(rendered))
     failure_reason = None
     if len(rendered) == 0:
@@ -176,6 +248,14 @@ def run_pipeline(
                 len(highlights),
             )
 
+    clips_ready = resolve_clip_paths(rendered, paths["final"])
+    emit_clips_ready(
+        progress_callback,
+        clip_paths=clips_ready,
+        clips=rendered,
+        percent=100,
+    )
+
     report = {
         "input_video": str(input_video),
         "duration_seconds": round(duration, 2),
@@ -184,6 +264,8 @@ def run_pipeline(
         "highlights_detected": len(highlights),
         "clips_created": len(rendered),
         "clips": rendered,
+        "clips_ready": clips_ready,
+        "output_dir": str(paths["final"].resolve()),
         "log_file": str(log_path),
         "failure_reason": failure_reason,
     }
@@ -197,6 +279,7 @@ def _extract_analysis_samples(
     frame_dir: Path,
     vision_config: dict,
     microclip_config: dict,
+    progress_callback: ProgressCallback | None = None,
 ) -> list[dict]:
     """Extract microclips by default, with safe fallback to legacy frame sampling."""
     use_microclips = bool(microclip_config.get("enabled", True))
@@ -204,6 +287,12 @@ def _extract_analysis_samples(
 
     if use_microclips:
         try:
+            emit_progress(
+                progress_callback,
+                stage=STAGE_MICROCLIPS,
+                percent=12,
+                message="Sampling short gameplay microclips...",
+            )
             logger.info("[Pipeline] Extracting microclips...")
             microclip_dir = frame_dir.parent / "microclips" / frame_dir.name
             samples = extract_microclips(
@@ -215,19 +304,38 @@ def _extract_analysis_samples(
                 jpeg_quality=jpeg_quality,
             )
             if samples:
+                emit_progress(
+                    progress_callback,
+                    stage=STAGE_MICROCLIPS,
+                    percent=28,
+                    message=f"Sampled {len(samples)} microclip(s) for analysis.",
+                )
                 return samples
             logger.warning("[Pipeline] Microclip sampling returned zero samples — falling back to frames.")
         except Exception as exc:  # noqa: BLE001
             logger.warning("[Pipeline] Microclip sampling failed — falling back to frames: %s", exc)
 
+    emit_progress(
+        progress_callback,
+        stage=STAGE_EXTRACTING,
+        percent=15,
+        message="Extracting frames from gameplay video...",
+    )
     logger.info("[Pipeline] Extracting frames...")
-    return extract_frames(
+    frames = extract_frames(
         input_video,
         frame_dir,
         interval_seconds=float(vision_config.get("analysis_interval_seconds", 3)),
         max_frames=int(vision_config.get("max_frames_to_analyze", 24)),
         jpeg_quality=jpeg_quality,
     )
+    emit_progress(
+        progress_callback,
+        stage=STAGE_EXTRACTING,
+        percent=28,
+        message=f"Extracted {len(frames)} frame(s) for analysis.",
+    )
+    return frames
 
 
 def load_config(config_path: str | Path | None = None) -> Dict[str, Any]:

@@ -12,10 +12,11 @@ import traceback
 from contextlib import redirect_stdout
 from pathlib import Path
 from tkinter import BOTH, END, LEFT, W, Canvas, filedialog, messagebox
-from tkinter import StringVar, Text, Tk
+from tkinter import DoubleVar, StringVar, Text, Tk
 from tkinter import ttk
 
 from scripts.pipeline import PROJECT_ROOT, load_config, run_pipeline
+from scripts.ui_logging import attach_ui_log_handler, detach_ui_log_handler
 
 
 APP_TITLE = "Gameplay Auto Editor"
@@ -40,9 +41,11 @@ class GameplayAutoEditorApp:
         self.root.geometry("1040x760")
         self.root.minsize(900, 650)
 
-        self.output_queue: queue.Queue[str] = queue.Queue()
+        self.output_queue: queue.Queue = queue.Queue()
         self.selected_video: Path | None = None
         self.report: dict | None = None
+        self.progress_var = DoubleVar(value=0.0)
+        self.stage_var = StringVar(value="Waiting to start...")
 
         self.provider_var = StringVar(value=self._initial_provider())
         self.max_clips_var = StringVar(value="5")
@@ -116,6 +119,9 @@ class GameplayAutoEditorApp:
 
         progress = ttk.LabelFrame(outer, text="2. Progress", padding=10)
         progress.pack(fill="x", pady=(0, 12))
+        self.progress_bar = ttk.Progressbar(progress, variable=self.progress_var, maximum=100)
+        self.progress_bar.pack(fill="x", pady=(0, 6))
+        ttk.Label(progress, textvariable=self.stage_var).pack(anchor=W, pady=(0, 6))
         self.progress_text = Text(progress, height=8, wrap="word")
         self.progress_text.pack(fill="x")
 
@@ -219,6 +225,8 @@ class GameplayAutoEditorApp:
         settings = self._settings_override()
         self.generate_button.configure(state="disabled")
         self.status_var.set("Generating clips. This can take a few minutes...")
+        self.progress_var.set(0.0)
+        self.stage_var.set("Starting clip generation...")
         self.progress_text.delete("1.0", END)
         self._clear_results()
 
@@ -253,12 +261,23 @@ class GameplayAutoEditorApp:
 
     def _run_generation_worker(self, video_path: Path, settings: dict) -> None:
         writer = QueueWriter(self.output_queue)
+        ui_session = attach_ui_log_handler(self.output_queue)
+
+        def progress_callback(event: dict) -> None:
+            self.output_queue.put(("EVENT", event))
+
         try:
             with redirect_stdout(writer):
-                report = run_pipeline(video_path, config_override=settings)
+                report = run_pipeline(
+                    video_path,
+                    config_override=settings,
+                    progress_callback=progress_callback,
+                )
             self.output_queue.put(("DONE", report))
         except Exception as exc:  # noqa: BLE001 - show friendly UI errors.
             self.output_queue.put(("ERROR", f"{exc}\n\n{traceback.format_exc()}"))
+        finally:
+            detach_ui_log_handler(ui_session)
 
     def _poll_output_queue(self) -> None:
         try:
@@ -268,6 +287,8 @@ class GameplayAutoEditorApp:
                     self._generation_done(item[1])
                 elif isinstance(item, tuple) and item[0] == "ERROR":
                     self._generation_failed(item[1])
+                elif isinstance(item, tuple) and item[0] == "EVENT":
+                    self._handle_ui_event(item[1])
                 else:
                     self._append_progress(str(item))
         except queue.Empty:
@@ -275,10 +296,44 @@ class GameplayAutoEditorApp:
 
         self.root.after(200, self._poll_output_queue)
 
+    def _handle_ui_event(self, event: dict) -> None:
+        event_type = event.get("type")
+        message = event.get("message", "")
+        percent = event.get("percent")
+
+        if isinstance(percent, (int, float)):
+            self.progress_var.set(float(percent))
+        if message:
+            self.stage_var.set(message)
+
+        if event_type == "progress":
+            stage = event.get("stage", "processing")
+            if message:
+                self._append_progress(f"[{stage}] {message}")
+        elif event_type == "highlights_detected":
+            count = int(event.get("count", 0))
+            self._append_progress(f"Highlight detection complete: {count} moment(s) found.")
+        elif event_type == "notice":
+            self._append_progress(message)
+        elif event_type == "clips_ready":
+            self.progress_var.set(100.0)
+            clip_count = int(event.get("count", 0))
+            self.stage_var.set(message or f"{clip_count} clip(s) ready to review.")
+            self._append_progress(message or f"{clip_count} clip(s) ready to review.")
+            partial_report = {
+                "clips": event.get("clips") or [],
+                "clips_ready": event.get("clips_ready") or [],
+                "clips_created": clip_count,
+            }
+            if partial_report["clips"] or partial_report["clips_ready"]:
+                self._show_results(partial_report)
+
     def _generation_done(self, report: dict) -> None:
         self.report = report
         self.generate_button.configure(state="normal")
         clips_created = int(report.get("clips_created", 0))
+        self.progress_var.set(100.0)
+        self.stage_var.set(f"Done. Created {clips_created} clip(s).")
         self.status_var.set(f"Done. Created {clips_created} clip(s).")
         if clips_created == 0:
             reason = report.get("failure_reason")
@@ -295,12 +350,70 @@ class GameplayAutoEditorApp:
     def _generation_failed(self, error_text: str) -> None:
         self.generate_button.configure(state="normal")
         self.status_var.set("Generation failed.")
+        self.stage_var.set("Generation failed.")
         self._append_progress(error_text)
         messagebox.showerror(APP_TITLE, "Clip generation failed. See the progress box for details.")
 
+    def _resolve_clip_file(self, clip: dict) -> Path | None:
+        raw_path = clip.get("final_clip")
+        if not raw_path:
+            return None
+
+        candidates = [
+            Path(raw_path),
+            PROJECT_ROOT / "final_clips" / Path(raw_path).name,
+            PROJECT_ROOT / Path(raw_path).name,
+        ]
+        output_dir = self.report.get("output_dir") if self.report else None
+        if output_dir:
+            candidates.insert(0, Path(output_dir) / Path(raw_path).name)
+
+        for candidate in candidates:
+            if candidate.exists():
+                return candidate.resolve()
+        return Path(raw_path).resolve()
+
+    def _clips_for_display(self, report: dict) -> list[dict]:
+        clips = list(report.get("clips") or [])
+        if clips:
+            return clips
+
+        clips_ready = list(report.get("clips_ready") or [])
+        if clips_ready:
+            return [
+                {
+                    "final_clip": path,
+                    "score": 0,
+                    "hook_text": Path(path).stem.replace("_", " "),
+                    "caption_text": Path(path).name,
+                    "categories": [],
+                    "start": 0,
+                    "end": 0,
+                }
+                for path in clips_ready
+            ]
+
+        final_dir = Path(report.get("output_dir") or PROJECT_ROOT / "final_clips")
+        if final_dir.exists():
+            discovered = sorted(final_dir.glob("*.mp4"), key=lambda path: path.stat().st_mtime, reverse=True)
+            if discovered:
+                return [
+                    {
+                        "final_clip": str(path.resolve()),
+                        "score": 0,
+                        "hook_text": path.stem.replace("_", " "),
+                        "caption_text": path.name,
+                        "categories": [],
+                        "start": 0,
+                        "end": 0,
+                    }
+                    for path in discovered[:10]
+                ]
+        return []
+
     def _show_results(self, report: dict) -> None:
         self._clear_results()
-        clips = report.get("clips", [])
+        clips = self._clips_for_display(report)
         if not clips:
             reason = report.get("failure_reason")
             if reason == "render_failed":
@@ -311,14 +424,30 @@ class GameplayAutoEditorApp:
             elif reason == "no_highlights":
                 message = "No highlights were detected. Try heuristic mode, lower minimum score, or a longer video."
             else:
-                message = "No clips were created. See the progress box and log file for details."
+                message = (
+                    "No clips were found yet. If processing just finished, open the final clips folder "
+                    "or check the progress log for details."
+                )
             ttk.Label(self.results_canvas, text=message, wraplength=900).pack(anchor=W)
             log_file = report.get("log_file")
             if log_file:
                 ttk.Label(self.results_canvas, text=f"Log file: {log_file}", wraplength=900).pack(anchor=W, pady=(6, 0))
+            output_dir = report.get("output_dir") or str((PROJECT_ROOT / "final_clips").resolve())
+            ttk.Label(self.results_canvas, text=f"Output folder: {output_dir}", wraplength=900).pack(
+                anchor=W,
+                pady=(6, 0),
+            )
+            self._refresh_results_canvas()
             return
 
         for index, clip in enumerate(clips, start=1):
+            final_clip = self._resolve_clip_file(clip)
+            if final_clip is None:
+                continue
+
+            clip = dict(clip)
+            clip["final_clip"] = str(final_clip)
+
             card = ttk.LabelFrame(
                 self.results_canvas,
                 text=f"Clip {index} - score {clip.get('score', 0)}/100",
@@ -326,14 +455,15 @@ class GameplayAutoEditorApp:
             )
             card.pack(fill="x", pady=(0, 10))
 
+            ttk.Label(card, text=f"File: {final_clip.name}").pack(anchor=W)
             ttk.Label(card, text=f"Hook: {clip.get('hook_text', '')}", font=("Arial", 11, "bold")).pack(anchor=W)
             ttk.Label(card, text=f"Caption: {clip.get('caption_text', '')}", wraplength=900).pack(anchor=W, pady=(4, 0))
             ttk.Label(card, text=f"Categories: {', '.join(clip.get('categories', [])) or 'none'}").pack(anchor=W)
-            ttk.Label(card, text=f"Moment: {clip.get('start')}s to {clip.get('end')}s").pack(anchor=W)
+            if clip.get("start") or clip.get("end"):
+                ttk.Label(card, text=f"Moment: {clip.get('start')}s to {clip.get('end')}s").pack(anchor=W)
 
             buttons = ttk.Frame(card)
             buttons.pack(fill="x", pady=(8, 0))
-            final_clip = Path(clip["final_clip"])
             ttk.Button(buttons, text="Play clip", command=lambda p=final_clip: open_path(p)).pack(side=LEFT)
             ttk.Button(buttons, text="Open folder", command=lambda p=final_clip: open_path(p.parent)).pack(
                 side=LEFT,
@@ -341,6 +471,12 @@ class GameplayAutoEditorApp:
             )
             ttk.Button(buttons, text="Export copy...", command=lambda p=final_clip: export_clip(p)).pack(side=LEFT)
             ttk.Button(buttons, text="Copy caption", command=lambda c=clip: self.copy_caption(c)).pack(side=LEFT, padx=8)
+
+        self._refresh_results_canvas()
+
+    def _refresh_results_canvas(self) -> None:
+        self.results_canvas.update_idletasks()
+        self.results_canvas_widget.configure(scrollregion=self.results_canvas_widget.bbox("all"))
 
     def copy_caption(self, clip: dict) -> None:
         self.root.clipboard_clear()
