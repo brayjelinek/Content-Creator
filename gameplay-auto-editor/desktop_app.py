@@ -84,6 +84,8 @@ class GameplayAutoEditorApp:
         self.theme_var = StringVar(value=self._initial_theme())
         self.game_profile_var = StringVar(value=self._initial_game_profile())
         self.smart_reframe_var = StringVar(value=self._initial_smart_reframe())
+        self.rollout_phase_var = StringVar(value=self._initial_rollout_phase())
+        self.rollout_phase_hint_var = StringVar(value=self._rollout_phase_summary())
         self.status_var = StringVar(value=copy.STATUS_IDLE)
         self.openai_key_var = StringVar(value="")
         self.key_status_var = StringVar(value=self._api_key_status())
@@ -248,6 +250,21 @@ class GameplayAutoEditorApp:
         self._add_spinbox_grid(settings_grid, 0, 1, copy.LBL_CLIP_COUNT, self.max_clips_var, 1, 10)
         self._add_spinbox_grid(settings_grid, 1, 0, copy.LBL_SENSITIVITY, self.min_score_var, 0, 100)
         self._add_combobox_grid(settings_grid, 1, 1, copy.LBL_EXPORT_FOR, self.platform_var, list(copy.PLATFORM_LABEL_TO_VALUE))
+        self._add_combobox_grid(
+            settings_grid,
+            2,
+            0,
+            copy.LBL_ROLLOUT_PHASE,
+            self.rollout_phase_var,
+            list(copy.ROLLOUT_PHASE_LABEL_TO_VALUE),
+            command=self._on_rollout_phase_changed,
+        )
+        ttk.Label(
+            settings_grid,
+            textvariable=self.rollout_phase_hint_var,
+            style="Caption.TLabel",
+            wraplength=420,
+        ).grid(row=2, column=1, sticky="w", padx=(AppTheme.SPACING_SM, 0), pady=(AppTheme.SPACING_XS, 0))
 
         self.advanced_settings = ttk.Frame(settings_card.content, style="CardSurface.TFrame")
         self._add_combobox_grid(self.advanced_settings, 0, 0, copy.LBL_LOOK, self.theme_var, list(copy.THEME_LABEL_TO_VALUE))
@@ -483,10 +500,14 @@ class GameplayAutoEditorApp:
         label: str,
         variable: StringVar,
         values: list[str] | dict[str, str],
+        command=None,
     ) -> None:
         options = list(values.keys()) if isinstance(values, dict) else values
         field = FormField(parent, label)
-        field.attach(ttk.Combobox(field, textvariable=variable, values=options, width=16, state="readonly"))
+        combo = ttk.Combobox(field, textvariable=variable, values=options, width=16, state="readonly")
+        if command is not None:
+            combo.bind("<<ComboboxSelected>>", lambda _event: command())
+        field.attach(combo)
         field.grid(row=row, column=column, sticky="ew", padx=(0, AppTheme.SPACING_SM), pady=(0, AppTheme.SPACING_SM))
 
     def _add_spinbox_grid(
@@ -1168,6 +1189,7 @@ class GameplayAutoEditorApp:
             "platform_preset": self._platform_value(),
             "game_profile": self._game_profile_value(),
             "smart_reframe": self._smart_reframe_value(),
+            "rollout_phase": self._rollout_phase_value(),
         }
 
     def _provider_value(self) -> str:
@@ -1184,6 +1206,26 @@ class GameplayAutoEditorApp:
 
     def _smart_reframe_value(self) -> str:
         return copy.REFRAME_LABEL_TO_VALUE.get(self.smart_reframe_var.get(), self.smart_reframe_var.get())
+
+    def _rollout_phase_value(self) -> str:
+        return copy.ROLLOUT_PHASE_LABEL_TO_VALUE.get(
+            self.rollout_phase_var.get(),
+            self.rollout_phase_var.get(),
+        )
+
+    def _on_rollout_phase_changed(self) -> None:
+        from scripts.config_rollout import describe_rollout_phase
+
+        phase = self._rollout_phase_value()
+        self.rollout_phase_hint_var.set(describe_rollout_phase(phase)["summary"])
+        if phase in {"phase_1", "phase_2", "phase_3"}:
+            self.smart_reframe_var.set(copy.REFRAME_VALUE_TO_LABEL.get("on", "On"))
+        if phase in {"phase_2", "phase_3"}:
+            self.provider_var.set(copy.DETECTION_VALUE_TO_LABEL.get("auto", "Smart auto"))
+        if phase == "stable":
+            self.smart_reframe_var.set(copy.REFRAME_VALUE_TO_LABEL.get("off", "Off"))
+            self.provider_var.set(copy.DETECTION_VALUE_TO_LABEL.get("heuristic", "Fast (no API key)"))
+        self.agent_advisor.update_context(ui_settings=self._ui_settings_snapshot())
 
     def _agent_tool_approval(self, tool_name: str, arguments: dict) -> bool:
         if tool_name == "suggest_settings":
@@ -1425,6 +1467,9 @@ class GameplayAutoEditorApp:
 
     def _settings_override(self) -> dict:
         return {
+            "rollout": {
+                "phase": self._rollout_phase_value(),
+            },
             "vision": {
                 "provider": self._provider_value(),
                 "analysis_interval_seconds": int(self.interval_var.get()),
@@ -1493,6 +1538,18 @@ class GameplayAutoEditorApp:
         except Exception:  # noqa: BLE001
             value = "off"
         return copy.REFRAME_VALUE_TO_LABEL.get(value, value)
+
+    def _initial_rollout_phase(self) -> str:
+        try:
+            phase = str(load_config().get("rollout", {}).get("phase", "phase_1"))
+        except Exception:  # noqa: BLE001
+            phase = "phase_1"
+        return copy.ROLLOUT_PHASE_VALUE_TO_LABEL.get(phase, phase)
+
+    def _rollout_phase_summary(self) -> str:
+        from scripts.config_rollout import describe_rollout_phase
+
+        return describe_rollout_phase(self._rollout_phase_value())["summary"]
 
     def _api_key_status(self) -> str:
         try:

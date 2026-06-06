@@ -50,6 +50,16 @@ LBL_GAME = "Game type"
 LBL_FACECAM = "Face cam split"
 LBL_SCAN_EVERY = "Scan every (sec)"
 LBL_AI_FRAMES = "Frames to check"
+LBL_ROLLOUT_PHASE = "Quality rollout"
+
+ROLLOUT_PHASE_LABEL_TO_VALUE = {
+    "Stable (proven defaults)": "stable",
+    "Phase 1 · Visual polish": "phase_1",
+    "Phase 2 · Smarter clips": "phase_2",
+    "Phase 3 · Full quality": "phase_3",
+    "Custom (config.json)": "custom",
+}
+ROLLOUT_PHASE_VALUE_TO_LABEL = {value: label for label, value in ROLLOUT_PHASE_LABEL_TO_VALUE.items()}
 
 DETECTION_LABEL_TO_VALUE = {
     "Fast (no API key)": "heuristic",

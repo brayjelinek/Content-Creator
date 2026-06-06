@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 
 from scripts.api_usage_guard import get_usage_summary, reset_video_counter
 from scripts.chat_signals import apply_chat_spikes_to_analyses, load_chat_spike_times
-from scripts.config_rollout import apply_rollout_defaults, build_features_applied
+from scripts.config_rollout import apply_rollout_defaults, build_features_applied, describe_rollout_phase
 from scripts.detection_profiles import load_profile, merge_profile_weights
 from scripts.clip_metadata import build_clip_report_entry, quality_tier
 from scripts.clip_timing import compute_clip_range
@@ -120,6 +120,10 @@ def _execute_pipeline(
     config = load_config(config_path)
     if config_override:
         config = _deep_merge(config, config_override)
+        config = apply_rollout_defaults(config)
+
+    phase = describe_rollout_phase((config.get("rollout") or {}).get("phase"))
+    logger.info("[Rollout] Active phase: %s — %s", phase["label"], phase["summary"])
 
     reset_video_counter()
     paths = paths or ensure_project_dirs()
