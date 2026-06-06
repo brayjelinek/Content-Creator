@@ -30,13 +30,29 @@ KILLFEED_KEYWORDS = (
 
 _OCR_READY = False
 _OCR_UNAVAILABLE_LOGGED = False
+_OCR_DISABLED_FOR_RUN = False
+_KILLFEED_SCORING_ENABLED = True
+_NO_KILLFEED_STREAK = 0
+_KILLFEED_DISABLED_LOGGED = False
 _RESOLVED_TESSERACT_PATH: str | None = None
+
+NO_KILLFEED_DISABLE_THRESHOLD = 5
+
+
+def reset_ocr_run_state() -> None:
+    """Reset per-run OCR counters and re-enable scoring unless OCR is unavailable."""
+    global _NO_KILLFEED_STREAK, _OCR_DISABLED_FOR_RUN, _KILLFEED_DISABLED_LOGGED, _KILLFEED_SCORING_ENABLED
+    _NO_KILLFEED_STREAK = 0
+    _OCR_DISABLED_FOR_RUN = False
+    _KILLFEED_DISABLED_LOGGED = False
+    _KILLFEED_SCORING_ENABLED = True
 
 
 def initialize_ocr(ocr_config: dict | None = None) -> dict[str, Any]:
     """Detect Tesseract once per run and configure pytesseract if available."""
     global _OCR_READY, _OCR_UNAVAILABLE_LOGGED, _RESOLVED_TESSERACT_PATH
 
+    reset_ocr_run_state()
     _OCR_READY = False
     cfg = dict(ocr_config or {})
     if not cfg.get("enabled", True):
@@ -79,6 +95,27 @@ def initialize_ocr(ocr_config: dict | None = None) -> dict[str, Any]:
             _OCR_UNAVAILABLE_LOGGED = True
         _OCR_READY = False
         return _status_payload(available=False, reason=str(exc))
+
+
+def disable_ocr_for_run(*, reason: str = "no_killfeed_ui") -> None:
+    """Disable OCR for the remainder of the current pipeline run."""
+    global _OCR_READY, _OCR_DISABLED_FOR_RUN, _KILLFEED_SCORING_ENABLED, _KILLFEED_DISABLED_LOGGED
+
+    _OCR_READY = False
+    _OCR_DISABLED_FOR_RUN = True
+    _KILLFEED_SCORING_ENABLED = False
+
+    if _KILLFEED_DISABLED_LOGGED:
+        return
+
+    if reason == "no_killfeed_ui":
+        logger.info("[OCR] Killfeed not present — disabling OCR for this run")
+        logger.info("[OCR] Disabled — no killfeed UI detected")
+    elif reason == "ocr_error":
+        logger.info("[OCR] OCR unavailable — skipping")
+    else:
+        logger.info("[OCR] Disabled — no killfeed UI detected")
+    _KILLFEED_DISABLED_LOGGED = True
 
 
 def resolve_tesseract_path(configured_path: str | None = None) -> str | None:
@@ -127,14 +164,14 @@ def resolve_tesseract_path(configured_path: str | None = None) -> str | None:
 
 def read_killfeed_region(frame: str | Path | np.ndarray) -> dict | None:
     """OCR the top-right killfeed region. Returns None if OCR is unavailable or fails."""
-    if not _OCR_READY:
+    if not _OCR_READY or _OCR_DISABLED_FOR_RUN:
         return None
 
     try:
         import pytesseract  # type: ignore[import-not-found]
         from PIL import Image
     except ImportError:
-        logger.info("[OCR] OCR unavailable — skipping")
+        disable_ocr_for_run(reason="ocr_error")
         return None
 
     image = _load_frame(frame)
@@ -155,27 +192,41 @@ def read_killfeed_region(frame: str | Path | np.ndarray) -> dict | None:
     try:
         text = pytesseract.image_to_string(pil_image, config="--psm 6").strip()
     except Exception as exc:  # noqa: BLE001
-        logger.info("[OCR] OCR unavailable — skipping")
         logger.debug("[OCR] OCR read failed: %s", exc)
+        disable_ocr_for_run(reason="ocr_error")
         return None
 
     normalized = " ".join(text.lower().split())
     if not normalized:
-        logger.info("[OCR] No killfeed detected")
+        _register_no_killfeed()
         return {"text": "", "matched": False, "keyword": None}
 
     keyword = _match_killfeed_keyword(normalized)
     if keyword:
+        global _NO_KILLFEED_STREAK
+        _NO_KILLFEED_STREAK = 0
         logger.info("[OCR] Killfeed detected: %s", normalized[:160])
         return {"text": normalized[:160], "matched": True, "keyword": keyword}
 
-    logger.info("[OCR] No killfeed detected")
+    _register_no_killfeed()
     return {"text": normalized[:160], "matched": False, "keyword": None}
+
+
+def _register_no_killfeed() -> None:
+    global _NO_KILLFEED_STREAK
+    _NO_KILLFEED_STREAK += 1
+    if _NO_KILLFEED_STREAK > NO_KILLFEED_DISABLE_THRESHOLD:
+        disable_ocr_for_run(reason="no_killfeed_ui")
 
 
 def is_ocr_available() -> bool:
     """Return True when OCR has been initialized successfully."""
-    return _OCR_READY
+    return _OCR_READY and not _OCR_DISABLED_FOR_RUN
+
+
+def is_killfeed_scoring_enabled() -> bool:
+    """Return True when killfeed OCR bonuses should be applied."""
+    return _KILLFEED_SCORING_ENABLED
 
 
 def _match_killfeed_keyword(text: str) -> str | None:

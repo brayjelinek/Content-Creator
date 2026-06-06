@@ -31,6 +31,7 @@ class VisionAnalyzer:
     def __init__(self, config: dict):
         self.config = config
         self.provider = (config.get("provider") or "heuristic").lower()
+        self.requested_provider = self.provider
         self.openai_api_key = config.get("openai_api_key") or os.getenv("OPENAI_API_KEY", "")
         self.anthropic_api_key = config.get("anthropic_api_key") or os.getenv("ANTHROPIC_API_KEY", "")
 
@@ -41,13 +42,18 @@ class VisionAnalyzer:
                 self.provider = "anthropic"
             else:
                 self.provider = "heuristic"
+                logger.info("[Hybrid] Using fallback heuristic scoring")
 
         if self.provider == "openai" and not self.openai_api_key:
             logger.warning("[VisionAnalyzer] provider=openai but no API key — using heuristic fallback.")
+            logger.info("[Hybrid] Using fallback heuristic scoring")
             self.provider = "heuristic"
         if self.provider == "anthropic" and not self.anthropic_api_key:
             logger.warning("[VisionAnalyzer] provider=anthropic but no API key — using heuristic fallback.")
+            logger.info("[Hybrid] Using fallback heuristic scoring")
             self.provider = "heuristic"
+
+        self._hybrid_fallback_logged = False
 
     def analyze_frames(self, samples: Iterable[dict]) -> List[dict]:
         """Analyze frame or microclip samples (backward-compatible entry point)."""
@@ -72,15 +78,23 @@ class VisionAnalyzer:
                 logger.warning("[VisionAnalyzer] Sample analysis failed at %.2fs: %s", sample.get("timestamp", 0), exc)
                 fallback = self._heuristic_analysis(sample)
                 fallback["provider_error"] = str(exc)
+                self._log_hybrid_fallback_once()
                 analyses.append(fallback)
 
         provider_errors = [item.get("provider_error") for item in analyses if item.get("provider_error")]
         if provider_errors:
+            self._log_hybrid_fallback_once()
             logger.warning(
                 "[VisionAnalyzer] %s sample(s) fell back to heuristic due to errors.",
                 len(provider_errors),
             )
         return analyses
+
+    def _log_hybrid_fallback_once(self) -> None:
+        if self._hybrid_fallback_logged:
+            return
+        logger.info("[Hybrid] Using fallback heuristic scoring")
+        self._hybrid_fallback_logged = True
 
     def analyze_sample(self, sample: dict) -> dict:
         if sample.get("clip_path"):
@@ -95,6 +109,7 @@ class VisionAnalyzer:
                 fallback = self._heuristic_analysis(sample)
                 fallback["provider_error"] = f"openai failed: {exc}"
                 logger.warning("[VisionAnalyzer] OpenAI microclip failed at %.2fs: %s", sample.get("timestamp", 0), exc)
+                self._log_hybrid_fallback_once()
                 return fallback
 
         if self.provider == "anthropic" and self.anthropic_api_key:
@@ -108,6 +123,7 @@ class VisionAnalyzer:
                     sample.get("timestamp", 0),
                     exc,
                 )
+                self._log_hybrid_fallback_once()
                 return fallback
 
         return self._heuristic_analysis(sample)
@@ -120,6 +136,7 @@ class VisionAnalyzer:
                 fallback = self._heuristic_analysis(sample)
                 fallback["provider_error"] = f"openai failed: {exc}"
                 logger.warning("[VisionAnalyzer] OpenAI failed at %.2fs: %s", sample.get("timestamp", 0), exc)
+                self._log_hybrid_fallback_once()
                 return fallback
 
         if self.provider == "anthropic" and self.anthropic_api_key:
@@ -129,6 +146,7 @@ class VisionAnalyzer:
                 fallback = self._heuristic_analysis(sample)
                 fallback["provider_error"] = f"anthropic failed: {exc}"
                 logger.warning("[VisionAnalyzer] Anthropic failed at %.2fs: %s", sample.get("timestamp", 0), exc)
+                self._log_hybrid_fallback_once()
                 return fallback
 
         return self._heuristic_analysis(sample)

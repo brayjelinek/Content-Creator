@@ -5,6 +5,8 @@ from __future__ import annotations
 import logging
 from typing import Iterable, List
 
+from scripts.ocr_utils import is_killfeed_scoring_enabled
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_WEIGHTS = {
@@ -137,7 +139,7 @@ def compute_weighted_score(analysis: dict, weights: dict | None = None) -> dict:
     bonus = 0.0
     if hitmarker:
         bonus += float(cfg["hitmarker_bonus"])
-    if killfeed:
+    if killfeed and is_killfeed_scoring_enabled():
         bonus += float(cfg["killfeed_bonus"])
     if low_health:
         bonus += float(cfg["low_health_bonus"])

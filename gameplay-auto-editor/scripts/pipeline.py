@@ -145,6 +145,7 @@ def run_pipeline(
 
     ai_fallbacks = sum(1 for item in analyses if item.get("provider_error"))
     if ai_fallbacks:
+        logger.info("[Hybrid] Using fallback heuristic scoring")
         emit_ui_notice(progress_callback, "[UI] AI scoring failed — fallback to heuristic")
 
     duration = get_video_duration(input_video)
@@ -155,30 +156,11 @@ def run_pipeline(
         percent=50,
         message="Scoring highlight moments...",
     )
-    highlights = detect_highlights(analyses, duration, config.get("highlight_detection", {}))
+    highlight_config = config.get("highlight_detection", {})
+    highlights = detect_highlights(analyses, duration, highlight_config)
+    highlights = _ensure_minimum_highlights(highlights, analyses, samples, duration, highlight_config)
     logger.info("[Pipeline] Highlights detected: %s", len(highlights))
     emit_highlights_detected(progress_callback, count=len(highlights), percent=55)
-
-    if not highlights:
-        logger.warning("[Pipeline] No highlights detected — stopping before render.")
-        report = {
-            "input_video": str(input_video),
-            "duration_seconds": round(duration, 2),
-            "frames_analyzed": len(samples),
-            "samples_analyzed": len(samples),
-            "highlights_detected": 0,
-            "clips_created": 0,
-            "clips": [],
-            "clips_ready": [],
-            "output_dir": str(paths["final"].resolve()),
-            "log_file": str(log_path),
-            "failure_reason": "no_highlights",
-        }
-        _write_json(report_dir / f"{video_stem}_run_report.json", report)
-        emit_clips_ready(progress_callback, clip_paths=[], clips=[], percent=100)
-        logger.warning("[Pipeline] Final clips generated: 0")
-        logger.warning("[Pipeline] No clips were generated — check logs above.")
-        return report
 
     for highlight in highlights:
         logger.info(
@@ -221,6 +203,30 @@ def run_pipeline(
         render_config=render_config,
         video_duration=duration,
     )
+
+    used_fallback_render = False
+    if len(rendered) == 0:
+        logger.warning("[Pipeline] Render produced zero clips — attempting fallback clip.")
+        fallback_highlight = _build_fallback_highlight(analyses, samples, duration, highlight_config)
+        fallback_captioned = generate_captions(
+            [fallback_highlight],
+            video_name=video_stem,
+            add_hashtags=bool(render_config.get("add_hashtags", True)),
+            render_config=render_config,
+        )
+        rendered = process_highlights(
+            video_path=input_video,
+            highlights=fallback_captioned,
+            processed_dir=paths["processed"],
+            final_dir=paths["final"],
+            render_config=render_config,
+            video_duration=duration,
+        )
+        used_fallback_render = bool(rendered)
+        if used_fallback_render:
+            logger.info("[Pipeline] Fallback clip generated")
+            highlights = [fallback_highlight]
+
     for clip in rendered:
         logger.info(
             "[Pipeline] Final clip ready: %s (score %s)",
@@ -248,11 +254,13 @@ def run_pipeline(
                 len(highlights),
             )
 
+    output_dir = str(paths["final"].resolve())
     clips_ready = resolve_clip_paths(rendered, paths["final"])
     emit_clips_ready(
         progress_callback,
         clip_paths=clips_ready,
         clips=rendered,
+        output_dir=output_dir,
         percent=100,
     )
 
@@ -265,9 +273,12 @@ def run_pipeline(
         "clips_created": len(rendered),
         "clips": rendered,
         "clips_ready": clips_ready,
-        "output_dir": str(paths["final"].resolve()),
+        "output_dir": output_dir,
         "log_file": str(log_path),
         "failure_reason": failure_reason,
+        "used_fallback": used_fallback_render or any(
+            highlight.get("selection_mode", "").startswith("fallback") for highlight in highlights
+        ),
     }
     _write_json(report_dir / f"{video_stem}_run_report.json", report)
     return report
@@ -336,6 +347,97 @@ def _extract_analysis_samples(
         message=f"Extracted {len(frames)} frame(s) for analysis.",
     )
     return frames
+
+
+def _ensure_minimum_highlights(
+    highlights: list[dict],
+    analyses: list[dict],
+    samples: list[dict],
+    duration: float,
+    highlight_config: dict,
+) -> list[dict]:
+    """Guarantee at least one highlight candidate before rendering."""
+    if highlights:
+        return highlights
+
+    logger.warning("[Pipeline] No highlights detected — using fallback clip.")
+    fallback = _build_fallback_highlight(analyses, samples, duration, highlight_config)
+    logger.info("[Pipeline] Fallback clip generated at %.2fs-%.2fs", fallback["start"], fallback["end"])
+    return [fallback]
+
+
+def _build_fallback_highlight(
+    analyses: list[dict],
+    samples: list[dict],
+    duration: float,
+    highlight_config: dict,
+) -> dict:
+    """Build a guaranteed fallback highlight from the best sample or a default segment."""
+    before = float(highlight_config.get("clip_seconds_before", 4))
+    after = float(highlight_config.get("clip_seconds_after", 8))
+    min_clip_seconds = float(highlight_config.get("min_clip_seconds", 3))
+    max_clip_seconds = float(highlight_config.get("max_clip_seconds", 60))
+
+    selection_mode = "fallback_default_segment"
+    timestamp = duration * 0.15 if duration > 0 else 0.0
+    source_frame = None
+    source_clip = None
+    score = 1.0
+    summary = "Fallback gameplay segment."
+
+    if analyses:
+        best = max(
+            analyses,
+            key=lambda item: float(item.get("final_score", item.get("viral_score", item.get("score", 0)))),
+        )
+        timestamp = float(best.get("timestamp", timestamp))
+        source_frame = best.get("poster_frame_path") or best.get("frame_path")
+        source_clip = best.get("clip_path")
+        score = float(best.get("final_score", best.get("viral_score", 1)))
+        summary = best.get("summary", summary)
+        selection_mode = "fallback_best_microclip"
+    elif samples:
+        best = max(samples, key=lambda item: float(item.get("motion_score", 0)))
+        timestamp = float(best.get("timestamp", timestamp))
+        source_frame = best.get("poster_frame_path") or best.get("frame_path")
+        source_clip = best.get("clip_path")
+        score = float(best.get("motion_score", 1))
+        selection_mode = "fallback_best_sample"
+
+    if selection_mode == "fallback_default_segment" and duration > 0:
+        start = duration * 0.10
+        end = duration * 0.20
+        if end - start < min_clip_seconds:
+            end = min(duration, start + min_clip_seconds)
+    else:
+        start = max(0.0, timestamp - before)
+        end = min(duration, timestamp + after) if duration > 0 else timestamp + after
+        if end - start < min_clip_seconds:
+            end = min(duration if duration > 0 else start + min_clip_seconds, start + min_clip_seconds)
+        if end - start > max_clip_seconds:
+            end = start + max_clip_seconds
+
+    if end <= start:
+        end = start + min_clip_seconds
+        if duration > 0:
+            end = min(duration, end)
+
+    return {
+        "id": "highlight_fallback",
+        "timestamp": round(timestamp, 2),
+        "start": round(start, 2),
+        "end": round(end, 2),
+        "duration": round(end - start, 2),
+        "score": round(score, 2),
+        "categories": ["fallback"],
+        "summary": summary,
+        "reason": "Automatic fallback clip when no highlights were detected.",
+        "scores": {},
+        "score_breakdown": {},
+        "source_frame": source_frame,
+        "source_clip": source_clip,
+        "selection_mode": selection_mode,
+    }
 
 
 def load_config(config_path: str | Path | None = None) -> Dict[str, Any]:

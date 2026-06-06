@@ -228,7 +228,7 @@ class GameplayAutoEditorApp:
         self.progress_var.set(0.0)
         self.stage_var.set("Starting clip generation...")
         self.progress_text.delete("1.0", END)
-        self._clear_results()
+        self._reset_results_panel()
 
         thread = threading.Thread(target=self._run_generation_worker, args=(self.selected_video, settings), daemon=True)
         thread.start()
@@ -315,18 +315,23 @@ class GameplayAutoEditorApp:
             self._append_progress(f"Highlight detection complete: {count} moment(s) found.")
         elif event_type == "notice":
             self._append_progress(message)
-        elif event_type == "clips_ready":
+        elif event_type in ("clips_ready", "refresh_clips_ui"):
+            self._apply_clips_event(event)
+
+    def _apply_clips_event(self, event: dict) -> None:
+        clip_count = int(event.get("count", 0))
+        message = event.get("message") or f"{clip_count} clip(s) ready to review."
+        if event.get("type") == "clips_ready":
             self.progress_var.set(100.0)
-            clip_count = int(event.get("count", 0))
-            self.stage_var.set(message or f"{clip_count} clip(s) ready to review.")
-            self._append_progress(message or f"{clip_count} clip(s) ready to review.")
-            partial_report = {
-                "clips": event.get("clips") or [],
-                "clips_ready": event.get("clips_ready") or [],
-                "clips_created": clip_count,
-            }
-            if partial_report["clips"] or partial_report["clips_ready"]:
-                self._show_results(partial_report)
+            self.stage_var.set(message)
+        self._append_progress(message)
+        report = {
+            "clips": event.get("clips") or [],
+            "clips_ready": event.get("clips_ready") or [],
+            "clips_created": max(clip_count, len(event.get("clips_ready") or [])),
+            "output_dir": event.get("output_dir") or str((PROJECT_ROOT / "final_clips").resolve()),
+        }
+        self._show_results(report)
 
     def _generation_done(self, report: dict) -> None:
         self.report = report
@@ -338,9 +343,7 @@ class GameplayAutoEditorApp:
         if clips_created == 0:
             reason = report.get("failure_reason")
             log_file = report.get("log_file", "")
-            if reason == "no_highlights":
-                hint = "No highlight moments were detected. Try lowering minimum score or using more frames."
-            elif reason == "render_failed":
+            if reason == "render_failed":
                 hint = "Highlights were found but FFmpeg rendering failed. Open the log file for [FFmpeg] errors."
             else:
                 hint = "No clips were created. Open the log file for details."
@@ -354,17 +357,18 @@ class GameplayAutoEditorApp:
         self._append_progress(error_text)
         messagebox.showerror(APP_TITLE, "Clip generation failed. See the progress box for details.")
 
-    def _resolve_clip_file(self, clip: dict) -> Path | None:
+    def _resolve_clip_file(self, clip: dict, report: dict | None = None) -> Path | None:
         raw_path = clip.get("final_clip")
         if not raw_path:
             return None
 
+        active_report = report or self.report or {}
         candidates = [
             Path(raw_path),
             PROJECT_ROOT / "final_clips" / Path(raw_path).name,
             PROJECT_ROOT / Path(raw_path).name,
         ]
-        output_dir = self.report.get("output_dir") if self.report else None
+        output_dir = active_report.get("output_dir")
         if output_dir:
             candidates.insert(0, Path(output_dir) / Path(raw_path).name)
 
@@ -421,11 +425,9 @@ class GameplayAutoEditorApp:
                     "Highlights were detected but rendering failed. "
                     "Check the log file for [FFmpeg] errors (font path, filter chain, or missing FFmpeg)."
                 )
-            elif reason == "no_highlights":
-                message = "No highlights were detected. Try heuristic mode, lower minimum score, or a longer video."
             else:
                 message = (
-                    "No clips were found yet. If processing just finished, open the final clips folder "
+                    "Clips are still being finalized. If nothing appears shortly, open the final clips folder "
                     "or check the progress log for details."
                 )
             ttk.Label(self.results_canvas, text=message, wraplength=900).pack(anchor=W)
@@ -441,7 +443,7 @@ class GameplayAutoEditorApp:
             return
 
         for index, clip in enumerate(clips, start=1):
-            final_clip = self._resolve_clip_file(clip)
+            final_clip = self._resolve_clip_file(clip, report)
             if final_clip is None:
                 continue
 
@@ -454,6 +456,13 @@ class GameplayAutoEditorApp:
                 padding=10,
             )
             card.pack(fill="x", pady=(0, 10))
+
+            if clip.get("selection_mode", "").startswith("fallback") or report.get("used_fallback"):
+                ttk.Label(
+                    card,
+                    text="Fallback clip — generated automatically when no strong highlights were found.",
+                    wraplength=900,
+                ).pack(anchor=W, pady=(0, 4))
 
             ttk.Label(card, text=f"File: {final_clip.name}").pack(anchor=W)
             ttk.Label(card, text=f"Hook: {clip.get('hook_text', '')}", font=("Arial", 11, "bold")).pack(anchor=W)
@@ -483,9 +492,19 @@ class GameplayAutoEditorApp:
         self.root.clipboard_append(clip.get("caption_text", ""))
         self.status_var.set("Caption copied.")
 
-    def _clear_results(self) -> None:
+    def _reset_results_panel(self) -> None:
+        self._clear_results(show_placeholder=True)
+
+    def _clear_results(self, show_placeholder: bool = False) -> None:
         for child in self.results_canvas.winfo_children():
             child.destroy()
+        if show_placeholder:
+            ttk.Label(
+                self.results_canvas,
+                text="Generated clips will appear here with score, caption, and open/export buttons.",
+                wraplength=900,
+            ).pack(anchor=W)
+        self._refresh_results_canvas()
 
     def _append_progress(self, text: str) -> None:
         self.progress_text.insert(END, text if text.endswith("\n") else text + "\n")

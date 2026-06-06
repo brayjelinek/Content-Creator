@@ -69,6 +69,7 @@ def emit_clips_ready(
     *,
     clip_paths: list[str],
     clips: list[dict] | None = None,
+    output_dir: str | None = None,
     percent: int = 100,
 ) -> None:
     """Notify UI that final clips are ready to display."""
@@ -80,14 +81,44 @@ def emit_clips_ready(
         "clips_ready": resolved,
         "clips": clips or [],
         "count": len(resolved),
+        "output_dir": output_dir,
         "message": f"{len(resolved)} clip(s) ready to review.",
     }
     try:
         if callback:
             callback(event)
         logger.info("[UI] Clips ready: %s clips", len(resolved))
+        emit_refresh_clips_ui(
+            callback,
+            clip_paths=resolved,
+            clips=clips or [],
+            output_dir=output_dir,
+        )
     except Exception as exc:  # noqa: BLE001
         logger.debug("[UI] Clips ready callback failed: %s", exc)
+
+
+def emit_refresh_clips_ui(
+    callback: ProgressCallback | None,
+    *,
+    clip_paths: list[str],
+    clips: list[dict] | None = None,
+    output_dir: str | None = None,
+) -> None:
+    """Force the desktop UI to refresh the clip review panel."""
+    event = {
+        "type": "refresh_clips_ui",
+        "clips_ready": clip_paths,
+        "clips": clips or [],
+        "count": len(clip_paths),
+        "output_dir": output_dir,
+        "message": f"{len(clip_paths)} clip(s) ready to review.",
+    }
+    try:
+        if callback:
+            callback(event)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("[UI] Refresh clips callback failed: %s", exc)
 
 
 def emit_ui_notice(callback: ProgressCallback | None, message: str) -> None:

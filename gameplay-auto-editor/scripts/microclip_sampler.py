@@ -57,10 +57,11 @@ def extract_microclips(
     max_samples = max(int(max_samples), 1)
 
     sample_starts = _build_sample_starts(duration, interval_seconds, max_samples)
+    expected_count = len(sample_starts)
     logger.info(
         "[MicroclipSampler] Video %.2fs — extracting %s microclip(s) of %.1fs every %.1fs",
         duration,
-        len(sample_starts),
+        expected_count,
         clip_duration,
         interval_seconds,
     )
@@ -69,7 +70,12 @@ def extract_microclips(
     skipped = 0
 
     for index, start in enumerate(sample_starts):
-        safe_start = max(0.0, start)
+        max_start = max(0.0, duration - 0.5)
+        safe_start = max(0.0, min(float(start), max_start))
+        if safe_start >= duration:
+            skipped += 1
+            continue
+
         safe_duration = min(clip_duration, max(duration - safe_start, 0.5))
         clip_path = clip_dir / f"micro_{index:04d}_{safe_start:.2f}s.mp4"
 
@@ -107,7 +113,11 @@ def extract_microclips(
 
     if skipped:
         logger.warning("[MicroclipSampler] Skipped %s microclip sample(s)", skipped)
-    logger.info("[MicroclipSampler] Extracted %s usable microclip sample(s)", len(samples))
+    logger.info(
+        "[MicroclipSampler] Extracted %s usable microclip sample(s) (expected %s)",
+        len(samples),
+        expected_count,
+    )
     return [asdict(sample) for sample in samples]
 
 
@@ -115,11 +125,24 @@ def _build_sample_starts(duration: float, interval_seconds: float, max_samples: 
     if duration <= 0:
         return [0.0]
 
-    starts = list(np.arange(0, max(duration, interval_seconds), interval_seconds))
+    interval_seconds = max(float(interval_seconds), 0.5)
+    min_tail = 0.5
+    max_start = max(0.0, duration - min_tail)
+
+    starts: list[float] = []
+    current = 0.0
+    while current <= max_start + 1e-6:
+        starts.append(round(current, 3))
+        current += interval_seconds
+
+    starts = [float(max(0.0, min(value, max_start))) for value in starts]
+    starts = list(dict.fromkeys(starts))
+
     if len(starts) > max_samples:
         indexes = np.linspace(0, len(starts) - 1, max_samples).round().astype(int)
         starts = [starts[index] for index in indexes]
-    return [float(value) for value in starts]
+
+    return starts
 
 
 def _cut_microclip(video_path: Path, output_path: Path, start: float, duration: float) -> bool:
