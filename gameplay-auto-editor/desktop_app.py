@@ -17,6 +17,7 @@ from tkinter import ttk
 
 from scripts.clip_metadata import quality_tier, summarize_enhancements
 from scripts.pipeline import PROJECT_ROOT, load_config, run_pipeline
+from scripts.social_publish.manager import SocialPublishManager
 from scripts.ui_logging import attach_ui_log_handler, detach_ui_log_handler
 
 
@@ -63,9 +64,17 @@ class GameplayAutoEditorApp:
         self.ocr_status_var = StringVar(value=self._ocr_status())
         self.video_queue: list[Path] = []
         self.batch_reports: list[dict] = []
+        self.config = load_config()
+        self.social_manager = SocialPublishManager(self.config, PROJECT_ROOT)
+        self.social_status_vars = {
+            "youtube": StringVar(value="YouTube: checking..."),
+            "tiktok": StringVar(value="TikTok: checking..."),
+            "instagram": StringVar(value="Instagram: checking..."),
+        }
 
         self._build_ui()
         self._poll_output_queue()
+        self._refresh_social_status()
 
     def _build_ui(self) -> None:
         outer = ttk.Frame(self.root, padding=18)
@@ -149,6 +158,36 @@ class GameplayAutoEditorApp:
             text="Install Tesseract for killfeed detection: https://github.com/UB-Mannheim/tesseract/wiki",
             wraplength=960,
         ).pack(anchor=W, pady=(4, 0))
+
+        self.social_frame = ttk.LabelFrame(outer, text="Optional: Direct platform posting (OAuth)", padding=10)
+        self.social_frame.pack(fill="x", pady=(0, 12))
+        ttk.Label(
+            self.social_frame,
+            text=(
+                "Connect YouTube, TikTok, or Instagram to post clips directly. "
+                "Tokens are stored in your OS keychain — never in config or logs. "
+                "You must confirm each post. Enable social_publish.enabled and "
+                "rollout.optional_features.direct_publish in config.json to activate."
+            ),
+            wraplength=960,
+        ).pack(anchor=W)
+        for platform, label in (
+            ("youtube", "YouTube Shorts"),
+            ("tiktok", "TikTok"),
+            ("instagram", "Instagram Reels"),
+        ):
+            row = ttk.Frame(self.social_frame)
+            row.pack(fill="x", pady=(6, 0))
+            ttk.Label(row, text=label, width=18).pack(side=LEFT)
+            ttk.Label(row, textvariable=self.social_status_vars[platform], wraplength=520).pack(
+                side=LEFT,
+                padx=(0, 12),
+            )
+            ttk.Button(row, text="Connect", command=lambda p=platform: self.connect_platform(p)).pack(side=LEFT)
+            ttk.Button(row, text="Disconnect", command=lambda p=platform: self.disconnect_platform(p)).pack(
+                side=LEFT,
+                padx=(8, 0),
+            )
 
         progress = ttk.LabelFrame(outer, text="2. Progress", padding=10)
         progress.pack(fill="x", pady=(0, 12))
@@ -586,6 +625,20 @@ class GameplayAutoEditorApp:
                 text="Copy social post",
                 command=lambda c=clip: self.copy_social_caption(c),
             ).pack(side=LEFT)
+            if self.social_manager.is_enabled():
+                post_row = ttk.Frame(card)
+                post_row.pack(fill="x", pady=(6, 0))
+                ttk.Label(post_row, text="Post to:").pack(side=LEFT)
+                for platform, label in (
+                    ("youtube", "YouTube"),
+                    ("tiktok", "TikTok"),
+                    ("instagram", "Reels"),
+                ):
+                    ttk.Button(
+                        post_row,
+                        text=label,
+                        command=lambda p=platform, c=clip, path=final_clip: self.post_clip(p, c, path),
+                    ).pack(side=LEFT, padx=(8, 0))
             if clip.get("source_frame") and Path(str(clip.get("source_frame"))).exists():
                 ttk.Button(
                     buttons,
@@ -609,6 +662,143 @@ class GameplayAutoEditorApp:
         self.root.clipboard_clear()
         self.root.clipboard_append(text)
         self.status_var.set("Social caption copied.")
+
+    def _refresh_social_status(self) -> None:
+        if not self.social_manager.storage_ready():
+            message = "Secure storage unavailable — connect disabled"
+            for platform in self.social_status_vars:
+                self.social_status_vars[platform].set(message)
+            return
+
+        statuses = self.social_manager.platform_status()
+        for platform, status in statuses.items():
+            if not status.configured:
+                text = f"Not configured — {status.message}"
+            elif status.connected:
+                label = status.account_label or platform.title()
+                text = f"Connected ({label})"
+            else:
+                text = status.message or "Not connected"
+            self.social_status_vars[platform].set(text)
+
+    def connect_platform(self, platform: str) -> None:
+        if not self.social_manager.storage_ready():
+            messagebox.showerror(
+                APP_TITLE,
+                "Secure token storage is unavailable on this system. "
+                "Install a supported OS keychain backend before connecting accounts.",
+            )
+            return
+
+        self.status_var.set(f"Opening browser to connect {platform.title()}...")
+        thread = threading.Thread(target=self._connect_platform_worker, args=(platform,), daemon=True)
+        thread.start()
+
+    def _connect_platform_worker(self, platform: str) -> None:
+        try:
+            status = self.social_manager.connect(platform)
+            self.root.after(0, lambda: self._on_connect_finished(platform, status, None))
+        except Exception as exc:  # noqa: BLE001
+            self.root.after(0, lambda: self._on_connect_finished(platform, None, exc))
+
+    def _on_connect_finished(self, platform: str, status, error: Exception | None) -> None:
+        self._refresh_social_status()
+        if error:
+            messagebox.showerror(APP_TITLE, f"Could not connect {platform.title()}:\n{error}")
+            self.status_var.set(f"{platform.title()} connection failed.")
+            return
+        messagebox.showinfo(APP_TITLE, f"{platform.title()} connected successfully.")
+        self.status_var.set(f"{platform.title()} connected.")
+
+    def disconnect_platform(self, platform: str) -> None:
+        if not messagebox.askyesno(
+            APP_TITLE,
+            f"Disconnect {platform.title()}?\n\nStored tokens will be removed from secure storage.",
+        ):
+            return
+        try:
+            self.social_manager.disconnect(platform)
+            self._refresh_social_status()
+            self.status_var.set(f"{platform.title()} disconnected.")
+        except Exception as exc:  # noqa: BLE001
+            messagebox.showerror(APP_TITLE, f"Could not disconnect {platform.title()}:\n{exc}")
+
+    def post_clip(self, platform: str, clip: dict, video_path: Path) -> None:
+        if not self.social_manager.is_enabled():
+            messagebox.showinfo(
+                APP_TITLE,
+                "Direct publishing is disabled. Enable social_publish.enabled and "
+                "rollout.optional_features.direct_publish in config.json.",
+            )
+            return
+
+        status = self.social_manager.platform_status().get(platform)
+        if not status or not status.connected:
+            messagebox.showinfo(APP_TITLE, f"Connect {platform.title()} before posting.")
+            return
+
+        title = str(clip.get("hook_text") or clip.get("caption_text") or video_path.stem)
+        description = str(clip.get("social_caption") or clip.get("caption_text") or title)
+        privacy = self.social_manager.default_privacy(platform)
+        platform_label = {"youtube": "YouTube Shorts", "tiktok": "TikTok", "instagram": "Instagram Reels"}.get(
+            platform,
+            platform.title(),
+        )
+
+        confirmed = messagebox.askyesno(
+            APP_TITLE,
+            (
+                f"Post this clip to {platform_label}?\n\n"
+                f"File: {video_path.name}\n"
+                f"Title: {title[:80]}\n"
+                f"Privacy: {privacy}\n\n"
+                "This will upload the video using your connected account."
+            ),
+        )
+        if not confirmed:
+            return
+
+        self.status_var.set(f"Posting to {platform_label}...")
+        thread = threading.Thread(
+            target=self._post_clip_worker,
+            args=(platform, video_path, title, description, privacy),
+            daemon=True,
+        )
+        thread.start()
+
+    def _post_clip_worker(
+        self,
+        platform: str,
+        video_path: Path,
+        title: str,
+        description: str,
+        privacy: str,
+    ) -> None:
+        try:
+            result = self.social_manager.publish_clip(
+                platform,
+                video_path,
+                title=title,
+                description=description,
+                privacy=privacy,
+                user_confirmed=True,
+            )
+            self.root.after(0, lambda: self._on_post_finished(platform, result, None))
+        except Exception as exc:  # noqa: BLE001
+            self.root.after(0, lambda: self._on_post_finished(platform, None, exc))
+
+    def _on_post_finished(self, platform: str, result, error: Exception | None) -> None:
+        if error:
+            messagebox.showerror(APP_TITLE, f"Post to {platform.title()} failed:\n{error}")
+            self.status_var.set(f"{platform.title()} post failed.")
+            return
+        if result.ok:
+            extra = f"\n\nURL: {result.video_url}" if result.video_url else ""
+            messagebox.showinfo(APP_TITLE, f"{result.message}{extra}")
+            self.status_var.set(f"Posted to {platform.title()}.")
+        else:
+            messagebox.showwarning(APP_TITLE, result.message)
+            self.status_var.set(result.message)
 
     def copy_all_captions(self) -> None:
         report = self.report or {}

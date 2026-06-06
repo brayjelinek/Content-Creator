@@ -23,6 +23,7 @@ DEFAULT_ROLLOUT: dict[str, Any] = {
         "styled_ass_captions": False,
         "whisper_transcription": False,
         "batch_queue": True,
+        "direct_publish": False,
     },
 }
 
@@ -44,6 +45,13 @@ DEFAULT_CHAT_SIGNALS: dict[str, Any] = {
     "min_messages_per_window": 5,
     "match_window_seconds": 2.5,
     "score_bonus": 15,
+}
+
+DEFAULT_SOCIAL_PUBLISH: dict[str, Any] = {
+    "enabled": False,
+    "require_confirm": True,
+    "max_posts_per_session": 10,
+    "default_privacy": "private",
 }
 
 
@@ -104,6 +112,12 @@ def apply_rollout_defaults(config: dict[str, Any]) -> dict[str, Any]:
     if not rollout["optional_features"].get("whisper_transcription", False):
         merged["transcription"]["enabled"] = bool(merged["transcription"].get("enabled", False))
 
+    social = dict(DEFAULT_SOCIAL_PUBLISH)
+    social.update(dict(merged.get("social_publish") or {}))
+    if not rollout["optional_features"].get("direct_publish", False):
+        social["enabled"] = bool(social.get("enabled", False))
+    merged["social_publish"] = social
+
     return merged
 
 
@@ -131,4 +145,6 @@ def build_features_applied(config: dict[str, Any], report: dict[str, Any] | None
         or bool(viral.get("styled_ass_captions_enabled", False)),
         "whisper_transcription": bool((config.get("transcription") or {}).get("enabled", False)),
         "batch_queue": bool(optional.get("batch_queue", True)),
+        "direct_publish": bool((config.get("social_publish") or {}).get("enabled", False))
+        and bool(optional.get("direct_publish", False)),
     }

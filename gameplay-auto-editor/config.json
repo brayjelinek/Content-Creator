@@ -16,8 +16,15 @@
       "chat_signals": false,
       "styled_ass_captions": false,
       "whisper_transcription": false,
-      "batch_queue": true
+      "batch_queue": true,
+      "direct_publish": false
     }
+  },
+  "social_publish": {
+    "enabled": false,
+    "require_confirm": true,
+    "max_posts_per_session": 10,
+    "default_privacy": "private"
   },
   "transcription": {
     "enabled": false,
