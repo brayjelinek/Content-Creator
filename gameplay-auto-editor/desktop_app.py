@@ -194,10 +194,21 @@ class GameplayAutoEditorApp:
             return
 
         try:
+            from scripts.ocr_utils import initialize_ocr
             from scripts.pipeline_validation import preflight_pipeline
             from scripts.pipeline import load_config
 
-            preflight = preflight_pipeline(self.selected_video, load_config().get("rendering", {}))
+            config = load_config()
+            ocr_status = initialize_ocr(config.get("ocr", {}))
+            if ocr_status.get("available"):
+                self.ocr_status_var.set(f"Killfeed OCR ready: {ocr_status.get('tesseract_path')}")
+            else:
+                self.ocr_status_var.set(
+                    "Killfeed OCR not detected. Clips still generate. "
+                    "Install from https://github.com/UB-Mannheim/tesseract/wiki"
+                )
+
+            preflight = preflight_pipeline(self.selected_video, config.get("rendering", {}))
             if not preflight["ok"]:
                 messagebox.showerror(APP_TITLE, "\n".join(preflight["errors"]))
                 return

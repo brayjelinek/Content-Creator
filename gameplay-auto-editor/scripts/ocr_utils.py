@@ -37,6 +37,7 @@ def initialize_ocr(ocr_config: dict | None = None) -> dict[str, Any]:
     """Detect Tesseract once per run and configure pytesseract if available."""
     global _OCR_READY, _OCR_UNAVAILABLE_LOGGED, _RESOLVED_TESSERACT_PATH
 
+    _OCR_READY = False
     cfg = dict(ocr_config or {})
     if not cfg.get("enabled", True):
         logger.info("[OCR] OCR unavailable — skipping (disabled in config)")
@@ -84,12 +85,12 @@ def resolve_tesseract_path(configured_path: str | None = None) -> str | None:
     """Locate tesseract.exe from config, PATH, or common install locations."""
     candidates: list[Path] = []
 
-    if configured_path:
-        candidates.append(Path(configured_path))
-
     env_path = shutil.which("tesseract")
     if env_path:
         candidates.append(Path(env_path))
+
+    if configured_path:
+        candidates.append(Path(configured_path))
 
     if sys.platform.startswith("win"):
         candidates.extend(
@@ -151,7 +152,13 @@ def read_killfeed_region(frame: str | Path | np.ndarray) -> dict | None:
     if _RESOLVED_TESSERACT_PATH:
         pytesseract.pytesseract.tesseract_cmd = _RESOLVED_TESSERACT_PATH
 
-    text = pytesseract.image_to_string(pil_image, config="--psm 6").strip()
+    try:
+        text = pytesseract.image_to_string(pil_image, config="--psm 6").strip()
+    except Exception as exc:  # noqa: BLE001
+        logger.info("[OCR] OCR unavailable — skipping")
+        logger.debug("[OCR] OCR read failed: %s", exc)
+        return None
+
     normalized = " ".join(text.lower().split())
     if not normalized:
         logger.info("[OCR] No killfeed detected")

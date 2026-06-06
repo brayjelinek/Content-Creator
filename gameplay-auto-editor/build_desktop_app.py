@@ -45,6 +45,12 @@ def main() -> int:
         "anthropic",
         "--hidden-import",
         "cv2",
+        "--hidden-import",
+        "pytesseract",
+        "--hidden-import",
+        "PIL",
+        "--hidden-import",
+        "PIL.Image",
         ]
     )
 
