@@ -9,6 +9,8 @@ import os
 from pathlib import Path
 from typing import Dict, Iterable, List
 
+from scripts import api_usage_guard
+
 logger = logging.getLogger(__name__)
 
 
@@ -54,6 +56,15 @@ class VisionAnalyzer:
             self.provider = "heuristic"
 
         self._hybrid_fallback_logged = False
+        self.hybrid_mode = self.requested_provider == "auto"
+        self.uses_remote_vision = self.provider in {"openai", "anthropic"} and self._has_api_key()
+
+    def _has_api_key(self) -> bool:
+        if self.provider == "openai":
+            return bool(self.openai_api_key)
+        if self.provider == "anthropic":
+            return bool(self.anthropic_api_key)
+        return False
 
     def analyze_frames(self, samples: Iterable[dict]) -> List[dict]:
         """Analyze frame or microclip samples (backward-compatible entry point)."""
@@ -61,10 +72,63 @@ class VisionAnalyzer:
 
     def analyze_samples(self, samples: Iterable[dict]) -> List[dict]:
         sample_list = list(samples)
+        api_usage_guard.reset_video_counter()
+
+        if self.provider == "heuristic" or not self.uses_remote_vision:
+            return [self._heuristic_analysis(sample) for sample in sample_list]
+
+        if self.hybrid_mode:
+            return self._analyze_samples_hybrid(sample_list)
+
+        return self._analyze_samples_ai(sample_list)
+
+    def _analyze_samples_hybrid(self, sample_list: List[dict]) -> List[dict]:
         total = len(sample_list)
-        analyses = []
+        heuristic_results = [self._heuristic_analysis(sample) for sample in sample_list]
+        heuristic_scores = [float(item.get("viral_score", 0)) for item in heuristic_results]
+        api_indices = api_usage_guard.select_hybrid_api_candidates(total, heuristic_scores, self.config)
+
+        logger.info(
+            "[Hybrid] Heuristic pre-filter selected %s/%s microclip(s) for %s Vision",
+            len(api_indices),
+            total,
+            self.provider,
+        )
+
+        analyses: list[dict] = []
+        for index, sample in enumerate(sample_list):
+            fallback = heuristic_results[index]
+            if index not in api_indices:
+                analyses.append(fallback)
+                continue
+
+            sample_type = "microclip" if sample.get("clip_path") else "frame"
+            message = (
+                f"Analyzing {sample_type} {index + 1}/{total} at {sample.get('timestamp', 0)}s "
+                f"with {self.provider} (hybrid)..."
+            )
+            print(f"    {message}")
+            logger.info("[VisionAnalyzer] %s", message)
+            analyses.append(self._analyze_sample_with_guard(sample, fallback))
+
+        self._summarize_provider_errors(analyses)
+        return analyses
+
+    def _analyze_samples_ai(self, sample_list: List[dict]) -> List[dict]:
+        total = len(sample_list)
+        analyses: list[dict] = []
+        partial_logged = False
 
         for index, sample in enumerate(sample_list, start=1):
+            allowed, reason = api_usage_guard.can_make_api_call(self.config)
+            if not allowed:
+                if reason == "video" and not partial_logged:
+                    api_usage_guard.log_partial_ai_completion()
+                    partial_logged = True
+                api_usage_guard.log_limit_fallback(reason)
+                analyses.append(self._heuristic_analysis(sample))
+                continue
+
             sample_type = "microclip" if sample.get("clip_path") else "frame"
             message = (
                 f"Analyzing {sample_type} {index}/{total} at {sample.get('timestamp', 0)}s "
@@ -72,15 +136,50 @@ class VisionAnalyzer:
             )
             print(f"    {message}")
             logger.info("[VisionAnalyzer] %s", message)
-            try:
-                analyses.append(self.analyze_sample(sample))
-            except Exception as exc:  # noqa: BLE001 - never break pipeline
-                logger.warning("[VisionAnalyzer] Sample analysis failed at %.2fs: %s", sample.get("timestamp", 0), exc)
-                fallback = self._heuristic_analysis(sample)
-                fallback["provider_error"] = str(exc)
-                self._log_hybrid_fallback_once()
-                analyses.append(fallback)
+            analyses.append(self._analyze_sample_with_guard(sample, self._heuristic_analysis(sample)))
 
+        self._summarize_provider_errors(analyses)
+        return analyses
+
+    def _analyze_sample_with_guard(self, sample: dict, fallback: dict) -> dict:
+        allowed, reason = api_usage_guard.can_make_api_call(self.config)
+        if not allowed:
+            api_usage_guard.log_limit_fallback(reason)
+            self._log_hybrid_fallback_once()
+            return fallback
+
+        try:
+            if sample.get("clip_path"):
+                result = self._call_remote_microclip(sample)
+            else:
+                result = self._call_remote_frame(sample)
+            api_usage_guard.record_api_call(self.config)
+            return result
+        except Exception as exc:  # noqa: BLE001 - never break pipeline
+            if api_usage_guard.is_quota_error(exc):
+                api_usage_guard.handle_quota_error(exc, self.config)
+            else:
+                logger.warning(
+                    "[VisionAnalyzer] Sample analysis failed at %.2fs: %s",
+                    sample.get("timestamp", 0),
+                    exc,
+                )
+            fallback_result = dict(fallback)
+            fallback_result["provider_error"] = str(exc)
+            self._log_hybrid_fallback_once()
+            return fallback_result
+
+    def _call_remote_microclip(self, sample: dict) -> dict:
+        if self.provider == "openai":
+            return self._analyze_microclip_with_openai(sample)
+        return self._analyze_microclip_with_anthropic(sample)
+
+    def _call_remote_frame(self, sample: dict) -> dict:
+        if self.provider == "openai":
+            return self._analyze_with_openai(sample)
+        return self._analyze_with_anthropic(sample)
+
+    def _summarize_provider_errors(self, analyses: List[dict]) -> None:
         provider_errors = [item.get("provider_error") for item in analyses if item.get("provider_error")]
         if provider_errors:
             self._log_hybrid_fallback_once()
@@ -88,7 +187,6 @@ class VisionAnalyzer:
                 "[VisionAnalyzer] %s sample(s) fell back to heuristic due to errors.",
                 len(provider_errors),
             )
-        return analyses
 
     def _log_hybrid_fallback_once(self) -> None:
         if self._hybrid_fallback_logged:
@@ -97,59 +195,19 @@ class VisionAnalyzer:
         self._hybrid_fallback_logged = True
 
     def analyze_sample(self, sample: dict) -> dict:
-        if sample.get("clip_path"):
-            return self.analyze_microclip(sample)
-        return self.analyze_frame(sample)
+        if self.provider == "heuristic" or not self.uses_remote_vision:
+            return self._heuristic_analysis(sample)
+        return self._analyze_sample_with_guard(sample, self._heuristic_analysis(sample))
 
     def analyze_microclip(self, sample: dict) -> dict:
-        if self.provider == "openai" and self.openai_api_key:
-            try:
-                return self._analyze_microclip_with_openai(sample)
-            except Exception as exc:  # noqa: BLE001
-                fallback = self._heuristic_analysis(sample)
-                fallback["provider_error"] = f"openai failed: {exc}"
-                logger.warning("[VisionAnalyzer] OpenAI microclip failed at %.2fs: %s", sample.get("timestamp", 0), exc)
-                self._log_hybrid_fallback_once()
-                return fallback
-
-        if self.provider == "anthropic" and self.anthropic_api_key:
-            try:
-                return self._analyze_microclip_with_anthropic(sample)
-            except Exception as exc:  # noqa: BLE001
-                fallback = self._heuristic_analysis(sample)
-                fallback["provider_error"] = f"anthropic failed: {exc}"
-                logger.warning(
-                    "[VisionAnalyzer] Anthropic microclip failed at %.2fs: %s",
-                    sample.get("timestamp", 0),
-                    exc,
-                )
-                self._log_hybrid_fallback_once()
-                return fallback
-
-        return self._heuristic_analysis(sample)
+        if self.provider == "heuristic" or not self.uses_remote_vision:
+            return self._heuristic_analysis(sample)
+        return self._analyze_sample_with_guard(sample, self._heuristic_analysis(sample))
 
     def analyze_frame(self, sample: dict) -> dict:
-        if self.provider == "openai" and self.openai_api_key:
-            try:
-                return self._analyze_with_openai(sample)
-            except Exception as exc:  # noqa: BLE001
-                fallback = self._heuristic_analysis(sample)
-                fallback["provider_error"] = f"openai failed: {exc}"
-                logger.warning("[VisionAnalyzer] OpenAI failed at %.2fs: %s", sample.get("timestamp", 0), exc)
-                self._log_hybrid_fallback_once()
-                return fallback
-
-        if self.provider == "anthropic" and self.anthropic_api_key:
-            try:
-                return self._analyze_with_anthropic(sample)
-            except Exception as exc:  # noqa: BLE001
-                fallback = self._heuristic_analysis(sample)
-                fallback["provider_error"] = f"anthropic failed: {exc}"
-                logger.warning("[VisionAnalyzer] Anthropic failed at %.2fs: %s", sample.get("timestamp", 0), exc)
-                self._log_hybrid_fallback_once()
-                return fallback
-
-        return self._heuristic_analysis(sample)
+        if self.provider == "heuristic" or not self.uses_remote_vision:
+            return self._heuristic_analysis(sample)
+        return self._analyze_sample_with_guard(sample, self._heuristic_analysis(sample))
 
     def _analyze_microclip_with_openai(self, sample: dict) -> dict:
         from openai import OpenAI

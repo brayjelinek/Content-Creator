@@ -9,6 +9,11 @@
     "max_frames_to_analyze": 60,
     "request_timeout_seconds": 60,
     "jpeg_quality": 85,
+    "api_usage_protection_enabled": true,
+    "max_api_calls_per_video": 10,
+    "max_api_calls_per_session": 50,
+    "hybrid_ai_clip_min": 3,
+    "hybrid_ai_clip_max": 8,
     "microclip_sampling": {
       "enabled": true,
       "interval_seconds": 1.0,
