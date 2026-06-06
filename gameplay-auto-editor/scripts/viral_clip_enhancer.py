@@ -40,6 +40,9 @@ DEFAULT_VIRAL_CONFIG: dict[str, Any] = {
     "require_validation_for_slowmo": True,
     "min_validation_score": 45,
     "min_signal_count": 1,
+    "sound_effects_enabled": False,
+    "sound_effect_volume": 0.35,
+    "sound_effect_path": "",
 }
 
 
@@ -94,6 +97,7 @@ def enhance_rendered_clip(clip_path: str | Path, highlight: dict, render_config:
         highlight["viral_enhanced"] = True
         highlight["viral_slowmo_applied"] = use_slowmo
         highlight["viral_captions_burned"] = burn_captions
+        highlight["zoom_applied"] = bool(viral.get("zoom_enabled", True))
         applied = []
         if burn_captions:
             applied.append("hook/caption overlays")
@@ -104,6 +108,8 @@ def enhance_rendered_clip(clip_path: str | Path, highlight: dict, render_config:
         applied.append("contrast/audio polish")
         if use_slowmo:
             applied.append("pre-impact slow-mo")
+        if highlight.get("viral_sound_effect_applied"):
+            applied.append("impact SFX")
         logger.info("[Enhancer] Applied to %s: %s", clip_path.name, ", ".join(applied))
         return True
     except Exception as exc:  # noqa: BLE001 - never break pipeline
@@ -132,6 +138,7 @@ def _render_enhanced_clip(
     burn_captions: bool,
 ) -> None:
     has_audio = probe_has_audio(input_path)
+    sfx_path = _resolve_sound_effect_path(viral, settings)
     filter_chain = build_viral_filter_chain(
         clip_duration=clip_duration,
         impact_t=impact_t,
@@ -141,6 +148,7 @@ def _render_enhanced_clip(
         include_audio=has_audio,
         use_slowmo=use_slowmo,
         burn_captions=burn_captions,
+        sfx_input_index=1 if sfx_path else None,
     )
 
     command = [
@@ -148,12 +156,18 @@ def _render_enhanced_clip(
         "-y",
         "-i",
         str(input_path),
-        "-filter_complex",
-        filter_chain,
-        "-map",
-        "[vout]",
     ]
-    if has_audio:
+    if sfx_path:
+        command.extend(["-i", str(sfx_path)])
+    command.extend(
+        [
+            "-filter_complex",
+            filter_chain,
+            "-map",
+            "[vout]",
+        ]
+    )
+    if has_audio or sfx_path:
         command.extend(["-map", "[aout]", "-c:a", "aac"])
     command.extend(
         [
@@ -169,7 +183,12 @@ def _render_enhanced_clip(
         ]
     )
 
-    logger.info("[Enhancer] Running viral polish (slowmo=%s captions=%s)", use_slowmo, burn_captions)
+    logger.info(
+        "[Enhancer] Running viral polish (slowmo=%s captions=%s sfx=%s)",
+        use_slowmo,
+        burn_captions,
+        bool(sfx_path),
+    )
     logger.debug("[Enhancer] Filter chain: %s", filter_chain)
     result = subprocess.run(command, capture_output=True, text=True, check=False)
     if result.returncode != 0:
@@ -255,6 +274,7 @@ def build_viral_filter_chain(
     include_audio: bool,
     use_slowmo: bool,
     burn_captions: bool,
+    sfx_input_index: int | None = None,
 ) -> str:
     width = int(settings["width"])
     height = int(settings["height"])
@@ -349,6 +369,8 @@ def build_viral_filter_chain(
 
     audio_boost = float(viral.get("audio_boost_db", 3))
     boost_end = output_impact + 0.45
+    sfx_volume = float(viral.get("sound_effect_volume", 0.35))
+    sfx_delay_ms = max(0, int(output_impact * 1000))
 
     if use_slowmo and slow_end > slow_start + 0.08:
         audio_chain = (
@@ -357,12 +379,44 @@ def build_viral_filter_chain(
             f"[aslow]atrim={slow_start:.3f}:{slow_end:.3f},volume=0[a2];"
             f"[apost]atrim={slow_end:.3f},asetpts=PTS-STARTPTS[a3];"
             f"[a1][a2][a3]concat=n=3:v=0:a=1[acat];"
-            f"[acat]volume={audio_boost:.1f}dB:enable='between(t,{output_impact:.3f},{boost_end:.3f})'[aout]"
+            f"[acat]volume={audio_boost:.1f}dB:enable='between(t,{output_impact:.3f},{boost_end:.3f})'[aboost]"
         )
     else:
         audio_chain = (
             f"[0:a]aformat=sample_rates=48000:channel_layouts=stereo[acat];"
-            f"[acat]volume={audio_boost:.1f}dB:enable='between(t,{output_impact:.3f},{boost_end:.3f})'[aout]"
+            f"[acat]volume={audio_boost:.1f}dB:enable='between(t,{output_impact:.3f},{boost_end:.3f})'[aboost]"
         )
 
+    if sfx_input_index is not None:
+        highlight["viral_sound_effect_applied"] = True
+        audio_chain += (
+            f";[{sfx_input_index}:a]volume={sfx_volume:.2f},adelay={sfx_delay_ms}|{sfx_delay_ms}[sfx];"
+            f"[aboost][sfx]amix=inputs=2:duration=first:dropout_transition=0[aout]"
+        )
+    else:
+        audio_chain += ";[aboost]anull[aout]"
+
     return f"{video_chain};{audio_chain}"
+
+
+def _resolve_sound_effect_path(viral: dict, settings: dict) -> Path | None:
+    if not viral.get("sound_effects_enabled", False):
+        return None
+
+    candidates: list[Path] = []
+    custom = str(viral.get("sound_effect_path") or settings.get("sound_effect_path") or "").strip()
+    if custom:
+        candidates.append(Path(custom))
+
+    project_root = Path(__file__).resolve().parents[1]
+    candidates.extend(
+        [
+            project_root / "assets" / "sfx" / "impact.mp3",
+            project_root / "assets" / "sfx" / "impact.wav",
+        ]
+    )
+
+    for candidate in candidates:
+        if candidate.exists() and candidate.stat().st_size > 0:
+            return candidate.resolve()
+    return None

@@ -33,18 +33,21 @@ class UIHandlerSession:
 
 def attach_ui_log_handler(output_queue: queue.Queue) -> UIHandlerSession:
     """Attach a queue-backed log handler to the root logger."""
-    handler = UIQueueLogHandler(output_queue.put)
-    handler.setFormatter(logging.Formatter("%(message)s"))
-
     root = logging.getLogger()
     root.setLevel(logging.INFO)
 
     paused_handlers: list[logging.Handler] = []
     for existing in root.handlers[:]:
+        if isinstance(existing, UIQueueLogHandler):
+            root.removeHandler(existing)
+            existing.close()
+            continue
         if isinstance(existing, logging.StreamHandler) and not isinstance(existing, logging.FileHandler):
             root.removeHandler(existing)
             paused_handlers.append(existing)
 
+    handler = UIQueueLogHandler(output_queue.put)
+    handler.setFormatter(logging.Formatter("%(message)s"))
     root.addHandler(handler)
     return UIHandlerSession(handler, paused_handlers)
 

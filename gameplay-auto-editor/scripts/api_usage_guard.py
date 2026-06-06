@@ -195,3 +195,17 @@ def select_hybrid_api_candidates(
     target = max(hybrid_min, min(budget, hybrid_max)) if sample_count >= hybrid_min else min(budget, sample_count)
     ranked = sorted(range(sample_count), key=lambda index: heuristic_scores[index], reverse=True)
     return set(ranked[:target])
+
+
+def get_usage_summary(config: dict | None) -> dict[str, Any]:
+    """Return API usage counters for run reports."""
+    limits = get_limits(config)
+    return {
+        "protection_enabled": limits["enabled"],
+        "video_calls": _VIDEO_CALLS,
+        "session_calls": _SESSION_CALLS,
+        "max_per_video": limits["max_per_video"],
+        "max_per_session": limits["max_per_session"],
+        "run_disabled": _RUN_DISABLED,
+        "session_disabled": _SESSION_DISABLED,
+    }

@@ -12,14 +12,18 @@ from typing import Any, Callable, Dict
 
 from dotenv import load_dotenv
 
-from scripts.pipeline_validation import preflight_pipeline
+from scripts.api_usage_guard import get_usage_summary, reset_video_counter
+from scripts.clip_metadata import build_clip_report_entry, quality_tier
+from scripts.clip_timing import compute_clip_range
 from scripts.caption_generator import generate_captions
 from scripts.clip_cutter import get_video_duration, process_highlights
 from scripts.frame_extractor import extract_frames
 from scripts.highlight_detector import detect_highlights
 from scripts.logging_utils import setup_pipeline_logging
 from scripts.microclip_sampler import extract_microclips
+from scripts.moment_validator import enrich_highlight_validation
 from scripts.ocr_utils import initialize_ocr
+from scripts.pipeline_validation import preflight_pipeline
 from scripts.ui_events import (
     STAGE_DETECTING,
     STAGE_EXTRACTING,
@@ -33,7 +37,7 @@ from scripts.ui_events import (
     emit_ui_notice,
     resolve_clip_paths,
 )
-from scripts.moment_validator import enrich_highlight_validation
+from scripts.render_settings import merge_render_config
 from scripts.viral_clip_enhancer import enhance_rendered_clip
 from scripts.vision_analyzer import VisionAnalyzer
 
@@ -77,6 +81,7 @@ def run_pipeline(
     if config_override:
         config = _deep_merge(config, config_override)
 
+    reset_video_counter()
     paths = ensure_project_dirs()
     emit_progress(
         progress_callback,
@@ -98,7 +103,8 @@ def run_pipeline(
         message=f"Loading video: {input_video.name}",
     )
 
-    preflight = preflight_pipeline(input_video, config.get("rendering", {}))
+    render_config = merge_render_config(config.get("rendering", {}))
+    preflight = preflight_pipeline(input_video, render_config)
     if not preflight["ok"]:
         message = "; ".join(preflight["errors"])
         logger.error("[Pipeline] Preflight failed: %s", message)
@@ -113,7 +119,6 @@ def run_pipeline(
     report_dir.mkdir(parents=True, exist_ok=True)
 
     vision_config = config.get("vision", {})
-    render_config = config.get("rendering", {})
     microclip_config = vision_config.get("microclip_sampling", {})
 
     samples = _extract_analysis_samples(
@@ -165,6 +170,7 @@ def run_pipeline(
     emit_highlights_detected(progress_callback, count=len(highlights), percent=55)
 
     for highlight in highlights:
+        highlight["quality_tier"] = quality_tier(highlight)
         logger.info(
             "[Pipeline] Highlight %s at %.2fs (score %.2f, %.2fs-%.2fs)",
             highlight.get("id"),
@@ -243,6 +249,7 @@ def run_pipeline(
             enhanced = enhance_rendered_clip(clip["final_clip"], clip, render_config)
             if enhanced:
                 clip["viral_enhanced"] = True
+                clip["quality_tier"] = quality_tier(clip)
                 emit_ui_notice(
                     progress_callback,
                     f"[UI] Clip polished: {Path(clip['final_clip']).name}",
@@ -285,6 +292,10 @@ def run_pipeline(
         percent=100,
     )
 
+    detection_mode = provider
+    if ai_fallbacks:
+        detection_mode = f"{provider}_heuristic_fallback"
+
     report = {
         "input_video": str(input_video),
         "duration_seconds": round(duration, 2),
@@ -293,6 +304,7 @@ def run_pipeline(
         "highlights_detected": len(highlights),
         "clips_created": len(rendered),
         "clips": rendered,
+        "clip_summaries": [build_clip_report_entry(clip) for clip in rendered],
         "clips_ready": clips_ready,
         "output_dir": output_dir,
         "log_file": str(log_path),
@@ -300,6 +312,11 @@ def run_pipeline(
         "used_fallback": used_fallback_render or any(
             highlight.get("selection_mode", "").startswith("fallback") for highlight in highlights
         ),
+        "detection_mode": detection_mode,
+        "platform_preset": render_config.get("platform_preset", "generic"),
+        "theme": render_config.get("theme", "default"),
+        "api_usage": get_usage_summary(vision_config),
+        "enhancements_summary": _summarize_run_enhancements(rendered),
     }
     _write_json(report_dir / f"{video_stem}_run_report.json", report)
     return report
@@ -394,11 +411,6 @@ def _build_fallback_highlight(
     highlight_config: dict,
 ) -> dict:
     """Build a guaranteed fallback highlight from the best sample or a default segment."""
-    before = float(highlight_config.get("clip_seconds_before", 4))
-    after = float(highlight_config.get("clip_seconds_after", 8))
-    min_clip_seconds = float(highlight_config.get("min_clip_seconds", 3))
-    max_clip_seconds = float(highlight_config.get("max_clip_seconds", 60))
-
     selection_mode = "fallback_default_segment"
     timestamp = duration * 0.15 if duration > 0 else 0.0
     source_frame = None
@@ -428,20 +440,9 @@ def _build_fallback_highlight(
     if selection_mode == "fallback_default_segment" and duration > 0:
         start = duration * 0.10
         end = duration * 0.20
-        if end - start < min_clip_seconds:
-            end = min(duration, start + min_clip_seconds)
+        start, end = compute_clip_range((start + end) / 2, duration, highlight_config)
     else:
-        start = max(0.0, timestamp - before)
-        end = min(duration, timestamp + after) if duration > 0 else timestamp + after
-        if end - start < min_clip_seconds:
-            end = min(duration if duration > 0 else start + min_clip_seconds, start + min_clip_seconds)
-        if end - start > max_clip_seconds:
-            end = start + max_clip_seconds
-
-    if end <= start:
-        end = start + min_clip_seconds
-        if duration > 0:
-            end = min(duration, end)
+        start, end = compute_clip_range(timestamp, duration, highlight_config)
 
     return {
         "id": "highlight_fallback",
@@ -458,7 +459,23 @@ def _build_fallback_highlight(
         "source_frame": source_frame,
         "source_clip": source_clip,
         "selection_mode": selection_mode,
+        "quality_tier": "fallback",
     }
+
+
+def _summarize_run_enhancements(clips: list[dict]) -> dict[str, int]:
+    summary = {
+        "overlay_applied": 0,
+        "viral_enhanced": 0,
+        "viral_slowmo_applied": 0,
+        "viral_captions_burned": 0,
+        "viral_sound_effect_applied": 0,
+    }
+    for clip in clips:
+        for key in summary:
+            if clip.get(key):
+                summary[key] += 1
+    return summary
 
 
 def load_config(config_path: str | Path | None = None) -> Dict[str, Any]:

@@ -28,6 +28,18 @@ VIRAL_HOOKS = (
     "This was wild",
 )
 
+THEME_HOOKS = {
+    "hormozi": ("THIS CHANGES EVERYTHING", "YOU NEED TO SEE THIS", "STOP SCROLLING"),
+    "minimal": ("Highlight", "Key moment", "Watch closely"),
+    "gen_z": ("NO WAY 💀", "BRO WHAT", "THIS IS CRAZY"),
+}
+
+THEME_IMPACTS = {
+    "hormozi": ("INSANE", "GAME OVER", "CLUTCH"),
+    "minimal": ("Nice", "Clean", "Sharp"),
+    "gen_z": ("WTF", "NO WAY", "RIP"),
+}
+
 IMPACT_BY_CATEGORY = {
     "kills": ("HEADSHOT", "ELIMINATED", "INSANE"),
     "deaths": ("NO WAY", "RIP", "INSTANT"),
@@ -54,6 +66,7 @@ def generate_captions(
     from scripts.render_settings import merge_render_config
 
     settings = merge_render_config(render_config)
+    theme = str(settings.get("theme", "default")).lower()
     caption_max_chars = int(settings.get("caption_max_chars", 40))
     caption_max_lines = int(settings.get("caption_max_lines", 3))
     overlay_hashtags = bool(settings.get("add_hashtags_to_overlay", False))
@@ -63,8 +76,8 @@ def generate_captions(
     for highlight in highlights:
         categories = [str(category) for category in highlight.get("categories", [])]
         score = float(highlight.get("score", 0))
-        hook = sanitize_overlay_text(_pick_hook(categories, score, highlight))
-        impact_text = sanitize_overlay_text(_pick_impact_text(highlight, categories))
+        hook = sanitize_overlay_text(_pick_hook(categories, score, highlight, theme))
+        impact_text = sanitize_overlay_text(_pick_impact_text(highlight, categories, theme))
         overlay_body = sanitize_overlay_text(_overlay_caption_text(highlight, score))
         social_body = sanitize_overlay_text(_social_caption_text(highlight, display_name, score))
 
@@ -91,12 +104,16 @@ def generate_captions(
     return captioned
 
 
-def _pick_hook(categories: list[str], score: float, highlight: dict) -> str:
+def _pick_hook(categories: list[str], score: float, highlight: dict, theme: str = "default") -> str:
     custom_hook = str(highlight.get("custom_hook_text") or "").strip()
     if custom_hook:
         return custom_hook
 
     rng = random.Random(int(float(highlight.get("timestamp", 0)) * 1000) + int(score))
+    theme_hooks = THEME_HOOKS.get(theme)
+    if theme_hooks and rng.random() >= 0.4:
+        return rng.choice(theme_hooks)
+
     if score >= 60 or not categories or categories == ["setup moment"]:
         if rng.random() >= 0.35:
             return rng.choice(VIRAL_HOOKS)
@@ -113,11 +130,12 @@ def _pick_hook(categories: list[str], score: float, highlight: dict) -> str:
     return rng.choice(VIRAL_HOOKS)
 
 
-def _pick_impact_text(highlight: dict, categories: list[str]) -> str:
+def _pick_impact_text(highlight: dict, categories: list[str], theme: str = "default") -> str:
     custom_impact = str(highlight.get("custom_impact_text") or "").strip()
     if custom_impact:
         return custom_impact.upper()
 
+    theme_impacts = THEME_IMPACTS.get(theme)
     raw = highlight.get("raw_analysis") or {}
     signals = raw.get("gameplay_signals") or {}
     breakdown = highlight.get("score_breakdown") or {}
@@ -143,6 +161,9 @@ def _pick_impact_text(highlight: dict, categories: list[str]) -> str:
         options = IMPACT_BY_CATEGORY.get(category.lower())
         if options:
             return rng.choice(options)
+
+    if theme_impacts:
+        return rng.choice(theme_impacts)
 
     return rng.choice(DEFAULT_IMPACT_TEXTS)
 

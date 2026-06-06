@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Iterable, List
 
+from scripts.clip_timing import compute_clip_range
 from scripts.ocr_utils import is_killfeed_scoring_enabled
 
 logger = logging.getLogger(__name__)
@@ -30,13 +31,7 @@ def detect_highlights(analyses: Iterable[dict], video_duration: float, config: d
     weights = {**DEFAULT_WEIGHTS, **config.get("weighted_scoring", {})}
     smoothing = config.get("timestamp_smoothing", {})
     merge_seconds = float(smoothing.get("merge_seconds", config.get("merge_distance_seconds", 2)))
-    start_padding = float(smoothing.get("start_padding", 0.5))
-    end_padding = float(smoothing.get("end_padding", 1.0))
     max_clips = int(config.get("max_clips", 5))
-    min_clip_seconds = float(config.get("min_clip_seconds", 3))
-    max_clip_seconds = float(config.get("max_clip_seconds", 60))
-    before = float(config.get("clip_seconds_before", 4))
-    after = float(config.get("clip_seconds_after", 8))
     always_pick_best = bool(config.get("always_pick_best_frame", True))
     min_final_score = float(weights["min_final_score"])
 
@@ -72,20 +67,7 @@ def detect_highlights(analyses: Iterable[dict], video_duration: float, config: d
     highlights: list[dict] = []
     for index, candidate in enumerate(sorted(selected, key=lambda item: float(item.get("timestamp", 0))), start=1):
         timestamp = float(candidate.get("timestamp", 0))
-        start = max(0.0, timestamp - before)
-        end = min(float(video_duration), timestamp + after) if video_duration > 0 else timestamp + after
-        start = max(0.0, start - start_padding)
-        if video_duration > 0:
-            end = min(float(video_duration), end + end_padding)
-        else:
-            end = end + end_padding
-
-        if end <= start:
-            end = start + min_clip_seconds
-        if end - start < min_clip_seconds:
-            end = min(float(video_duration) if video_duration > 0 else start + min_clip_seconds, start + min_clip_seconds)
-        if end - start > max_clip_seconds:
-            end = start + max_clip_seconds
+        start, end = compute_clip_range(timestamp, float(video_duration), config)
 
         highlights.append(
             {

@@ -15,6 +15,7 @@ from tkinter import BOTH, END, LEFT, W, Canvas, filedialog, messagebox
 from tkinter import DoubleVar, StringVar, Text, Tk
 from tkinter import ttk
 
+from scripts.clip_metadata import quality_tier, summarize_enhancements
 from scripts.pipeline import PROJECT_ROOT, load_config, run_pipeline
 from scripts.ui_logging import attach_ui_log_handler, detach_ui_log_handler
 
@@ -52,6 +53,8 @@ class GameplayAutoEditorApp:
         self.min_score_var = StringVar(value="25")
         self.interval_var = StringVar(value="3")
         self.max_frames_var = StringVar(value="10")
+        self.platform_var = StringVar(value=self._initial_platform_preset())
+        self.theme_var = StringVar(value=self._initial_theme())
         self.status_var = StringVar(value="Choose a gameplay video to begin.")
         self.openai_key_var = StringVar(value="")
         self.key_status_var = StringVar(value=self._api_key_status())
@@ -88,6 +91,13 @@ class GameplayAutoEditorApp:
         self._add_spinbox(settings_row, "Minimum score", self.min_score_var, 0, 100)
         self._add_spinbox(settings_row, "Analyze every N seconds", self.interval_var, 1, 10)
         self._add_spinbox(settings_row, "Max AI frames", self.max_frames_var, 1, 40)
+        self._add_combobox(
+            settings_row,
+            "Platform preset",
+            self.platform_var,
+            ["generic", "tiktok", "youtube_shorts", "instagram_reels"],
+        )
+        self._add_combobox(settings_row, "Visual theme", self.theme_var, ["default", "hormozi", "minimal", "gen_z"])
 
         action_row = ttk.Frame(outer)
         action_row.pack(fill="x", pady=(0, 12))
@@ -452,12 +462,23 @@ class GameplayAutoEditorApp:
 
             card = ttk.LabelFrame(
                 self.results_canvas,
-                text=f"Clip {index} - score {clip.get('score', 0)}/100",
+                text=f"Clip {index} - score {clip.get('score', 0)}/100 ({clip.get('quality_tier', quality_tier(clip))})",
                 padding=10,
             )
             card.pack(fill="x", pady=(0, 10))
 
-            if clip.get("selection_mode", "").startswith("fallback") or report.get("used_fallback"):
+            badges = summarize_enhancements(clip)
+            if badges:
+                ttk.Label(card, text=f"Applied: {', '.join(badges)}", wraplength=900).pack(anchor=W, pady=(0, 4))
+
+            tier = clip.get("quality_tier") or quality_tier(clip)
+            if tier == "review_recommended":
+                ttk.Label(
+                    card,
+                    text="Review recommended — lower-confidence moment selected by fallback scoring.",
+                    wraplength=900,
+                ).pack(anchor=W, pady=(0, 4))
+            elif tier == "fallback" or clip.get("selection_mode", "").startswith("fallback") or report.get("used_fallback"):
                 ttk.Label(
                     card,
                     text="Fallback clip — generated automatically when no strong highlights were found.",
@@ -524,6 +545,10 @@ class GameplayAutoEditorApp:
                 "max_clips": int(self.max_clips_var.get()),
                 "min_score": int(self.min_score_var.get()),
             },
+            "rendering": {
+                "platform_preset": self.platform_var.get(),
+                "theme": self.theme_var.get(),
+            },
         }
 
     def _ocr_status(self) -> str:
@@ -545,6 +570,18 @@ class GameplayAutoEditorApp:
             return str(load_config().get("vision", {}).get("provider", "heuristic"))
         except Exception:  # noqa: BLE001
             return "heuristic"
+
+    def _initial_platform_preset(self) -> str:
+        try:
+            return str(load_config().get("rendering", {}).get("platform_preset", "tiktok"))
+        except Exception:  # noqa: BLE001
+            return "tiktok"
+
+    def _initial_theme(self) -> str:
+        try:
+            return str(load_config().get("rendering", {}).get("theme", "default"))
+        except Exception:  # noqa: BLE001
+            return "default"
 
     def _api_key_status(self) -> str:
         try:

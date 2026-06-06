@@ -30,10 +30,13 @@
     "max_clips": 5,
     "min_score": 60,
     "always_pick_best_frame": true,
-    "min_clip_seconds": 3,
+    "min_clip_seconds": 5,
+    "duration_floor_seconds": 5,
     "max_clip_seconds": 60,
-    "clip_seconds_before": 0.75,
-    "clip_seconds_after": 1.25,
+    "clip_seconds_before": 2.0,
+    "clip_seconds_after": 3.0,
+    "adaptive_padding_enabled": true,
+    "adaptive_short_video_threshold": 30,
     "merge_distance_seconds": 2,
     "weighted_scoring": {
       "ai_weight": 0.6,
@@ -46,11 +49,13 @@
     },
     "timestamp_smoothing": {
       "merge_seconds": 2,
-      "start_padding": 0.5,
-      "end_padding": 1.0
+      "start_padding": 1.5,
+      "end_padding": 2.5
     }
   },
   "rendering": {
+    "platform_preset": "tiktok",
+    "theme": "default",
     "width": 1080,
     "height": 1920,
     "video_crf": 23,
@@ -92,7 +97,10 @@
       "burn_captions_when_overlay_missing": true,
       "require_validation_for_slowmo": true,
       "min_validation_score": 45,
-      "min_signal_count": 1
+      "min_signal_count": 1,
+      "sound_effects_enabled": false,
+      "sound_effect_volume": 0.35,
+      "sound_effect_path": ""
     }
   }
 }
