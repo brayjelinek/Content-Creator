@@ -162,8 +162,8 @@ def resolve_tesseract_path(configured_path: str | None = None) -> str | None:
     return None
 
 
-def read_killfeed_region(frame: str | Path | np.ndarray) -> dict | None:
-    """OCR the top-right killfeed region. Returns None if OCR is unavailable or fails."""
+def read_killfeed_region(frame: str | Path | np.ndarray, profile: dict | None = None) -> dict | None:
+    """OCR the killfeed region. Returns None if OCR is unavailable or fails."""
     if not _OCR_READY or _OCR_DISABLED_FOR_RUN:
         return None
 
@@ -178,7 +178,7 @@ def read_killfeed_region(frame: str | Path | np.ndarray) -> dict | None:
     if image is None:
         return None
 
-    crop = _killfeed_crop(image)
+    crop = _killfeed_crop(image, profile)
     if crop.size == 0:
         return None
 
@@ -201,7 +201,7 @@ def read_killfeed_region(frame: str | Path | np.ndarray) -> dict | None:
         _register_no_killfeed()
         return {"text": "", "matched": False, "keyword": None}
 
-    keyword = _match_killfeed_keyword(normalized)
+    keyword = _match_killfeed_keyword(normalized, profile)
     if keyword:
         global _NO_KILLFEED_STREAK
         _NO_KILLFEED_STREAK = 0
@@ -229,16 +229,22 @@ def is_killfeed_scoring_enabled() -> bool:
     return _KILLFEED_SCORING_ENABLED
 
 
-def _match_killfeed_keyword(text: str) -> str | None:
-    for keyword in sorted(KILLFEED_KEYWORDS, key=len, reverse=True):
+def _match_killfeed_keyword(text: str, profile: dict | None = None) -> str | None:
+    keywords = list(profile.get("killfeed_keywords") or ()) if profile else []
+    if not keywords:
+        keywords = list(KILLFEED_KEYWORDS)
+    for keyword in sorted(keywords, key=len, reverse=True):
         if keyword in text:
             return keyword
     return None
 
 
-def _killfeed_crop(frame: np.ndarray) -> np.ndarray:
-    height, width = frame.shape[:2]
-    return frame[0 : int(height * 0.28), int(width * 0.55) : width]
+def _killfeed_crop(frame: np.ndarray, profile: dict | None = None) -> np.ndarray:
+    from scripts.detection_profiles import crop_region
+
+    roi = (profile or {}).get("killfeed_roi") or {"x": 0.55, "y": 0.0, "w": 0.45, "h": 0.28}
+    y1, y2, x1, x2 = crop_region(frame.shape, roi)
+    return frame[y1:y2, x1:x2]
 
 
 def _load_frame(frame: str | Path | np.ndarray) -> np.ndarray | None:

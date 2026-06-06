@@ -55,6 +55,8 @@ class GameplayAutoEditorApp:
         self.max_frames_var = StringVar(value="10")
         self.platform_var = StringVar(value=self._initial_platform_preset())
         self.theme_var = StringVar(value=self._initial_theme())
+        self.game_profile_var = StringVar(value=self._initial_game_profile())
+        self.smart_reframe_var = StringVar(value=self._initial_smart_reframe())
         self.status_var = StringVar(value="Choose a gameplay video to begin.")
         self.openai_key_var = StringVar(value="")
         self.key_status_var = StringVar(value=self._api_key_status())
@@ -98,6 +100,13 @@ class GameplayAutoEditorApp:
             ["generic", "tiktok", "youtube_shorts", "instagram_reels"],
         )
         self._add_combobox(settings_row, "Visual theme", self.theme_var, ["default", "hormozi", "minimal", "gen_z"])
+        self._add_combobox(
+            settings_row,
+            "Game profile",
+            self.game_profile_var,
+            ["generic", "valorant", "cod", "fortnite"],
+        )
+        self._add_combobox(settings_row, "Smart reframe", self.smart_reframe_var, ["off", "on"])
 
         action_row = ttk.Frame(outer)
         action_row.pack(fill="x", pady=(0, 12))
@@ -501,6 +510,17 @@ class GameplayAutoEditorApp:
             )
             ttk.Button(buttons, text="Export copy...", command=lambda p=final_clip: export_clip(p)).pack(side=LEFT)
             ttk.Button(buttons, text="Copy caption", command=lambda c=clip: self.copy_caption(c)).pack(side=LEFT, padx=8)
+            ttk.Button(
+                buttons,
+                text="Copy social post",
+                command=lambda c=clip: self.copy_social_caption(c),
+            ).pack(side=LEFT)
+            if clip.get("source_frame") and Path(str(clip.get("source_frame"))).exists():
+                ttk.Button(
+                    buttons,
+                    text="Preview frame",
+                    command=lambda c=clip: self.preview_frame(c),
+                ).pack(side=LEFT, padx=8)
 
         self._refresh_results_canvas()
 
@@ -512,6 +532,23 @@ class GameplayAutoEditorApp:
         self.root.clipboard_clear()
         self.root.clipboard_append(clip.get("caption_text", ""))
         self.status_var.set("Caption copied.")
+
+    def copy_social_caption(self, clip: dict) -> None:
+        text = clip.get("social_caption") or clip.get("caption_text") or ""
+        self.root.clipboard_clear()
+        self.root.clipboard_append(text)
+        self.status_var.set("Social caption copied.")
+
+    def preview_frame(self, clip: dict) -> None:
+        frame_path = clip.get("source_frame")
+        if not frame_path:
+            messagebox.showinfo(APP_TITLE, "No preview frame available for this clip.")
+            return
+        path = Path(str(frame_path))
+        if not path.exists():
+            messagebox.showinfo(APP_TITLE, "Preview frame file not found.")
+            return
+        open_path(path)
 
     def _reset_results_panel(self) -> None:
         self._clear_results(show_placeholder=True)
@@ -541,13 +578,17 @@ class GameplayAutoEditorApp:
                 "analysis_interval_seconds": int(self.interval_var.get()),
                 "max_frames_to_analyze": int(self.max_frames_var.get()),
             },
-            "highlight_detection": {
-                "max_clips": int(self.max_clips_var.get()),
-                "min_score": int(self.min_score_var.get()),
-            },
             "rendering": {
                 "platform_preset": self.platform_var.get(),
                 "theme": self.theme_var.get(),
+                "smart_reframe": {
+                    "enabled": self.smart_reframe_var.get() == "on",
+                },
+            },
+            "highlight_detection": {
+                "max_clips": int(self.max_clips_var.get()),
+                "min_score": int(self.min_score_var.get()),
+                "game_profile": self.game_profile_var.get(),
             },
         }
 
@@ -582,6 +623,19 @@ class GameplayAutoEditorApp:
             return str(load_config().get("rendering", {}).get("theme", "default"))
         except Exception:  # noqa: BLE001
             return "default"
+
+    def _initial_game_profile(self) -> str:
+        try:
+            return str(load_config().get("highlight_detection", {}).get("game_profile", "generic"))
+        except Exception:  # noqa: BLE001
+            return "generic"
+
+    def _initial_smart_reframe(self) -> str:
+        try:
+            enabled = bool(load_config().get("rendering", {}).get("smart_reframe", {}).get("enabled", False))
+            return "on" if enabled else "off"
+        except Exception:  # noqa: BLE001
+            return "off"
 
     def _api_key_status(self) -> str:
         try:

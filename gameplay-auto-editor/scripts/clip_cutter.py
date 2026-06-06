@@ -19,6 +19,7 @@ from scripts.pipeline_validation import (
     validate_processed_clip_exists,
 )
 from scripts.render_settings import OUTPUT_WIDTH, merge_render_config, resolve_font_path
+from scripts.smart_reframe import apply_smart_reframe, merge_reframe_settings
 from scripts.text_utils import sanitize_overlay_text, wrap_overlay_text
 
 logger = logging.getLogger(__name__)
@@ -104,21 +105,32 @@ def process_single_highlight(
     cut_clip(video_path, processed_path, highlight["start"], highlight["duration"], settings)
     validate_processed_clip_exists(processed_path)
 
+    render_source = processed_path
+    render_settings = merge_reframe_settings(settings, processed_path)
+    if render_settings.get("reframe_analysis"):
+        reframed_path = processed_path.with_name(f"{processed_path.stem}_reframed.mp4")
+        if apply_smart_reframe(processed_path, reframed_path, render_settings):
+            render_source = reframed_path
+            highlight = dict(highlight)
+            highlight["smart_reframe_applied"] = True
+            highlight["reframe_layout"] = render_settings["reframe_analysis"].get("layout")
+            highlight["reframe_corner"] = render_settings["reframe_analysis"].get("corner")
+
     logger.info("[FFmpeg] Rendering vertical clip %s", final_path.name)
     overlay_applied = False
     try:
         render_vertical_clip(
-            processed_path,
+            render_source,
             final_path,
             highlight,
-            settings,
+            render_settings,
             video_duration=video_duration,
         )
         overlay_applied = True
     except Exception as exc:
         logger.error("[FFmpeg] Overlay render failed for %s: %s", highlight.get("id"), exc)
         logger.warning("[FFmpeg] Retrying %s without text overlays (vertical-only fallback).", final_path.name)
-        render_vertical_clip_base(processed_path, final_path, settings)
+        render_vertical_clip_base(render_source, final_path, render_settings)
 
     validate_vertical_output(
         final_path,

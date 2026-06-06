@@ -38,6 +38,7 @@ def extract_microclips(
     clip_duration: float = 1.5,
     max_samples: int = 60,
     jpeg_quality: int = 85,
+    detection_profile: dict | None = None,
 ) -> List[dict]:
     """Sample 1–2 second microclips every N seconds for downstream analysis."""
     video_path = Path(video_path)
@@ -87,12 +88,19 @@ def extract_microclips(
         poster_path = frame_dir / f"micro_{index:04d}_{safe_start:.2f}s.jpg"
         killfeed_path = crop_dir / f"micro_{index:04d}_{safe_start:.2f}s_killfeed.jpg"
         health_path = crop_dir / f"micro_{index:04d}_{safe_start:.2f}s_health.jpg"
-        metrics = _extract_poster_and_crops(clip_path, poster_path, killfeed_path, health_path, jpeg_quality)
+        metrics = _extract_poster_and_crops(
+            clip_path,
+            poster_path,
+            killfeed_path,
+            health_path,
+            jpeg_quality,
+            detection_profile,
+        )
         if metrics is None:
             skipped += 1
             continue
 
-        signals = analyze_microclip_signals(clip_path, poster_path)
+        signals = analyze_microclip_signals(clip_path, poster_path, detection_profile)
         audio_summary = audio_waveform_summary(clip_path)
 
         samples.append(
@@ -184,7 +192,14 @@ def _extract_poster_and_crops(
     killfeed_path: Path,
     health_path: Path,
     jpeg_quality: int,
+    detection_profile: dict | None = None,
 ) -> dict | None:
+    from scripts.detection_profiles import crop_region
+
+    profile = dict(detection_profile or {})
+    killfeed_roi = profile.get("killfeed_roi") or {"x": 0.55, "y": 0.0, "w": 0.45, "h": 0.28}
+    health_roi = profile.get("health_roi") or {"x": 0.0, "y": 0.78, "w": 0.28, "h": 0.22}
+
     cap = cv2.VideoCapture(str(clip_path))
     if not cap.isOpened():
         return None
@@ -197,9 +212,10 @@ def _extract_poster_and_crops(
         return None
 
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    height, width = frame.shape[:2]
-    killfeed = frame[0 : int(height * 0.28), int(width * 0.55) : width]
-    health = frame[int(height * 0.78) : height, 0 : int(width * 0.28)]
+    ky1, ky2, kx1, kx2 = crop_region(frame.shape, killfeed_roi)
+    hy1, hy2, hx1, hx2 = crop_region(frame.shape, health_roi)
+    killfeed = frame[ky1:ky2, kx1:kx2]
+    health = frame[hy1:hy2, hx1:hx2]
 
     cv2.imwrite(str(poster_path), frame, [int(cv2.IMWRITE_JPEG_QUALITY), int(jpeg_quality)])
     cv2.imwrite(str(killfeed_path), killfeed, [int(cv2.IMWRITE_JPEG_QUALITY), int(jpeg_quality)])

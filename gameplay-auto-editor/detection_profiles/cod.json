@@ -1,0 +1,25 @@
+{
+  "id": "cod",
+  "label": "Call of Duty",
+  "killfeed_roi": {"x": 0.52, "y": 0.0, "w": 0.48, "h": 0.32},
+  "health_roi": {"x": 0.0, "y": 0.80, "w": 0.30, "h": 0.20},
+  "hitmarker_roi": {"x": 0.44, "y": 0.42, "w": 0.12, "h": 0.12},
+  "facecam_corners": ["bottom_left", "top_right", "bottom_right"],
+  "hitmarker_red_threshold": 185,
+  "hitmarker_white_threshold": 205,
+  "hitmarker_flash_threshold": 38,
+  "killfeed_keywords": [
+    "eliminated",
+    "killed",
+    "headshot",
+    "double kill",
+    "fury kill",
+    "merciless"
+  ],
+  "score_weights": {
+    "hitmarker_bonus": 30,
+    "killfeed_bonus": 42,
+    "low_health_bonus": 12,
+    "audio_spike_bonus": 12
+  }
+}

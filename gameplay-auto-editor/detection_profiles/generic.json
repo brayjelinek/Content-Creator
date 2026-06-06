@@ -1,0 +1,27 @@
+{
+  "id": "generic",
+  "label": "Generic FPS",
+  "killfeed_roi": {"x": 0.55, "y": 0.0, "w": 0.45, "h": 0.28},
+  "health_roi": {"x": 0.0, "y": 0.78, "w": 0.28, "h": 0.22},
+  "hitmarker_roi": {"x": 0.35, "y": 0.35, "w": 0.30, "h": 0.30},
+  "facecam_corners": ["bottom_left", "top_right", "top_left", "bottom_right"],
+  "hitmarker_red_threshold": 180,
+  "hitmarker_white_threshold": 200,
+  "hitmarker_flash_threshold": 35,
+  "killfeed_keywords": [
+    "eliminated",
+    "killed",
+    "downed",
+    "headshot",
+    "double kill",
+    "squad wipe",
+    "knocked",
+    "assist"
+  ],
+  "score_weights": {
+    "hitmarker_bonus": 20,
+    "killfeed_bonus": 40,
+    "low_health_bonus": 15,
+    "audio_spike_bonus": 10
+  }
+}

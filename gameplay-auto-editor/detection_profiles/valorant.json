@@ -1,0 +1,25 @@
+{
+  "id": "valorant",
+  "label": "Valorant",
+  "killfeed_roi": {"x": 0.58, "y": 0.0, "w": 0.42, "h": 0.30},
+  "health_roi": {"x": 0.0, "y": 0.82, "w": 0.24, "h": 0.18},
+  "hitmarker_roi": {"x": 0.40, "y": 0.38, "w": 0.20, "h": 0.20},
+  "facecam_corners": ["bottom_left", "top_right"],
+  "hitmarker_red_threshold": 170,
+  "hitmarker_white_threshold": 195,
+  "hitmarker_flash_threshold": 32,
+  "killfeed_keywords": [
+    "eliminated",
+    "headshot",
+    "ace",
+    "clutch",
+    "spike",
+    "defused"
+  ],
+  "score_weights": {
+    "hitmarker_bonus": 25,
+    "killfeed_bonus": 45,
+    "low_health_bonus": 18,
+    "audio_spike_bonus": 8
+  }
+}

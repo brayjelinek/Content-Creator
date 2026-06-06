@@ -31,6 +31,8 @@ def main() -> int:
         "--add-data",
         _data_arg(ROOT / "config.json", "."),
         "--add-data",
+        _data_arg(ROOT / "detection_profiles", "detection_profiles"),
+        "--add-data",
         _data_arg(ROOT / ".env.example", "."),
     ]
 

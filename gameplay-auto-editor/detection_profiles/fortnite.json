@@ -1,0 +1,24 @@
+{
+  "id": "fortnite",
+  "label": "Fortnite",
+  "killfeed_roi": {"x": 0.56, "y": 0.0, "w": 0.44, "h": 0.26},
+  "health_roi": {"x": 0.0, "y": 0.76, "w": 0.32, "h": 0.24},
+  "hitmarker_roi": {"x": 0.46, "y": 0.44, "w": 0.10, "h": 0.10},
+  "facecam_corners": ["bottom_left", "top_right"],
+  "hitmarker_red_threshold": 175,
+  "hitmarker_white_threshold": 200,
+  "hitmarker_flash_threshold": 30,
+  "killfeed_keywords": [
+    "eliminated",
+    "knocked",
+    "victory royale",
+    "headshot",
+    "team kill"
+  ],
+  "score_weights": {
+    "hitmarker_bonus": 22,
+    "killfeed_bonus": 38,
+    "low_health_bonus": 14,
+    "audio_spike_bonus": 10
+  }
+}

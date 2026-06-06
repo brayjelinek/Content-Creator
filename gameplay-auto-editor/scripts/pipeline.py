@@ -13,6 +13,7 @@ from typing import Any, Callable, Dict
 from dotenv import load_dotenv
 
 from scripts.api_usage_guard import get_usage_summary, reset_video_counter
+from scripts.detection_profiles import load_profile, merge_profile_weights
 from scripts.clip_metadata import build_clip_report_entry, quality_tier
 from scripts.clip_timing import compute_clip_range
 from scripts.caption_generator import generate_captions
@@ -104,6 +105,12 @@ def run_pipeline(
     )
 
     render_config = merge_render_config(config.get("rendering", {}))
+    highlight_config = config.get("highlight_detection", {})
+    detection_profile = load_profile(highlight_config.get("game_profile"))
+    highlight_config = merge_profile_weights(highlight_config, detection_profile)
+    render_config["facecam_corners"] = detection_profile.get("facecam_corners")
+    logger.info("[Pipeline] Detection profile: %s", detection_profile.get("label", detection_profile.get("id")))
+
     preflight = preflight_pipeline(input_video, render_config)
     if not preflight["ok"]:
         message = "; ".join(preflight["errors"])
@@ -126,6 +133,7 @@ def run_pipeline(
         frame_dir=frame_dir,
         vision_config=vision_config,
         microclip_config=microclip_config,
+        detection_profile=detection_profile,
         progress_callback=progress_callback,
     )
     if not samples:
@@ -163,7 +171,6 @@ def run_pipeline(
         percent=50,
         message="Scoring highlight moments...",
     )
-    highlight_config = config.get("highlight_detection", {})
     highlights = detect_highlights(analyses, duration, highlight_config)
     highlights = _ensure_minimum_highlights(highlights, analyses, samples, duration, highlight_config)
     logger.info("[Pipeline] Highlights detected: %s", len(highlights))
@@ -315,6 +322,7 @@ def run_pipeline(
         "detection_mode": detection_mode,
         "platform_preset": render_config.get("platform_preset", "generic"),
         "theme": render_config.get("theme", "default"),
+        "game_profile": detection_profile.get("id", "generic"),
         "api_usage": get_usage_summary(vision_config),
         "enhancements_summary": _summarize_run_enhancements(rendered),
     }
@@ -328,6 +336,7 @@ def _extract_analysis_samples(
     frame_dir: Path,
     vision_config: dict,
     microclip_config: dict,
+    detection_profile: dict | None = None,
     progress_callback: ProgressCallback | None = None,
 ) -> list[dict]:
     """Extract microclips by default, with safe fallback to legacy frame sampling."""
@@ -351,6 +360,7 @@ def _extract_analysis_samples(
                 clip_duration=float(microclip_config.get("duration_seconds", 1.5)),
                 max_samples=int(microclip_config.get("max_samples", vision_config.get("max_frames_to_analyze", 60))),
                 jpeg_quality=jpeg_quality,
+                detection_profile=detection_profile,
             )
             if samples:
                 emit_progress(

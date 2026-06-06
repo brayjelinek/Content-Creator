@@ -27,6 +27,7 @@
     "install_url": "https://github.com/UB-Mannheim/tesseract/wiki"
   },
   "highlight_detection": {
+    "game_profile": "generic",
     "max_clips": 5,
     "min_score": 60,
     "always_pick_best_frame": true,
@@ -80,6 +81,12 @@
     "add_hashtags": true,
     "add_hashtags_to_overlay": false,
     "impact_font_size": 72,
+    "smart_reframe": {
+      "enabled": false,
+      "layout": "gameplay_split",
+      "facecam_ratio": 0.30,
+      "min_facecam_score": 18.0
+    },
     "viral_enhancements": {
       "enabled": true,
       "slowmo_enabled": true,

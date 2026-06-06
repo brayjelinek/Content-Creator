@@ -14,6 +14,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from scripts.detection_profiles import crop_region
 from scripts.ocr_utils import read_killfeed_region
 
 logger = logging.getLogger(__name__)
@@ -22,6 +23,7 @@ logger = logging.getLogger(__name__)
 def analyze_microclip_signals(
     clip_path: str | Path,
     poster_frame_path: str | Path | None = None,
+    profile: dict | None = None,
 ) -> dict:
     """Return optional gameplay signals for one microclip sample."""
     signals = {
@@ -51,12 +53,12 @@ def analyze_microclip_signals(
     frame_path = Path(poster_frame_path) if poster_frame_path else _middle_frame_path(clip_path)
     if frame_path and frame_path.exists():
         try:
-            signals["hitmarker_detected"] = _detect_hitmarker_flash(clip_path)
+            signals["hitmarker_detected"] = _detect_hitmarker_flash(clip_path, profile)
         except Exception as exc:  # noqa: BLE001
             logger.debug("[GameplaySignals] hitmarker failed for %s: %s", clip_path.name, exc)
 
         try:
-            ocr_result = read_killfeed_region(frame_path)
+            ocr_result = read_killfeed_region(frame_path, profile=profile)
             if ocr_result:
                 signals["killfeed_ocr_text"] = ocr_result.get("text", "")
                 signals["killfeed_ocr_match"] = bool(ocr_result.get("matched", False))
@@ -65,7 +67,7 @@ def analyze_microclip_signals(
             logger.debug("[GameplaySignals] killfeed OCR failed for %s: %s", clip_path.name, exc)
 
         try:
-            signals["low_health_detected"] = _detect_low_health(frame_path)
+            signals["low_health_detected"] = _detect_low_health(frame_path, profile)
         except Exception as exc:  # noqa: BLE001
             logger.debug("[GameplaySignals] low-health failed for %s: %s", clip_path.name, exc)
 
@@ -139,7 +141,13 @@ def _ffmpeg_volume_stats(clip_path: Path) -> tuple[float | None, float | None]:
     return mean_db, max_db
 
 
-def _detect_hitmarker_flash(clip_path: Path) -> bool:
+def _detect_hitmarker_flash(clip_path: Path, profile: dict | None = None) -> bool:
+    profile = dict(profile or {})
+    roi = profile.get("hitmarker_roi") or {"x": 0.35, "y": 0.35, "w": 0.30, "h": 0.30}
+    red_threshold = int(profile.get("hitmarker_red_threshold", 180))
+    white_threshold = int(profile.get("hitmarker_white_threshold", 200))
+    flash_threshold = float(profile.get("hitmarker_flash_threshold", 35))
+
     cap = cv2.VideoCapture(str(clip_path))
     if not cap.isOpened():
         return False
@@ -151,15 +159,19 @@ def _detect_hitmarker_flash(clip_path: Path) -> bool:
         if not ok:
             break
         height, width = frame.shape[:2]
-        x1, x2 = int(width * 0.35), int(width * 0.65)
-        y1, y2 = int(height * 0.35), int(height * 0.65)
+        y1, y2, x1, x2 = crop_region(frame.shape, roi)
         center = frame[y1:y2, x1:x2]
+        if center.size == 0:
+            continue
         gray = cv2.cvtColor(center, cv2.COLOR_BGR2GRAY)
+        red = center[:, :, 2]
+        white = gray > white_threshold
+        red_hit = red > red_threshold
         if previous_center is not None:
             diff = cv2.absdiff(gray, previous_center)
-            bright = gray > 210
+            bright = (gray > 210) | red_hit | white
             spike = float(np.mean(diff[bright])) if np.any(bright) else 0.0
-            if spike >= 35:
+            if spike >= flash_threshold:
                 flash_detected = True
                 break
         previous_center = gray
@@ -167,13 +179,15 @@ def _detect_hitmarker_flash(clip_path: Path) -> bool:
     return flash_detected
 
 
-def _detect_low_health(frame_path: Path) -> bool:
+def _detect_low_health(frame_path: Path, profile: dict | None = None) -> bool:
+    profile = dict(profile or {})
+    roi = profile.get("health_roi") or {"x": 0.0, "y": 0.78, "w": 0.28, "h": 0.22}
     frame = cv2.imread(str(frame_path))
     if frame is None:
         return False
 
-    height, width = frame.shape[:2]
-    region = frame[int(height * 0.78) : height, 0 : int(width * 0.28)]
+    y1, y2, x1, x2 = crop_region(frame.shape, roi)
+    region = frame[y1:y2, x1:x2]
     if region.size == 0:
         return False
 
