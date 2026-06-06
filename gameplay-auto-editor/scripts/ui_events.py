@@ -132,6 +132,41 @@ def emit_ui_notice(callback: ProgressCallback | None, message: str) -> None:
         logger.debug("[UI] Notice callback failed: %s", exc)
 
 
+def emit_run_summary(
+    callback: ProgressCallback | None,
+    *,
+    report: dict[str, Any],
+) -> None:
+    """Emit a compact run summary for the desktop UI."""
+    event = {
+        "type": "run_summary",
+        "report": report,
+        "message": _format_run_summary_message(report),
+    }
+    try:
+        if callback:
+            callback(event)
+        logger.info("[UI] %s", event["message"])
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("[UI] Run summary callback failed: %s", exc)
+
+
+def _format_run_summary_message(report: dict[str, Any]) -> str:
+    clips = int(report.get("clips_created", 0))
+    tiers = report.get("quality_tier_counts") or {}
+    validated = tiers.get("validated", 0)
+    review = tiers.get("review_recommended", 0) + tiers.get("low_confidence", 0)
+    fallback = tiers.get("fallback", 0)
+    parts = [f"Run complete: {clips} clip(s)"]
+    if validated:
+        parts.append(f"{validated} validated")
+    if review:
+        parts.append(f"{review} review suggested")
+    if fallback:
+        parts.append(f"{fallback} fallback")
+    return ". ".join(parts) + "."
+
+
 def resolve_clip_paths(clips: list[dict], final_dir: Path | None = None) -> list[str]:
     """Resolve absolute clip paths from rendered clip metadata."""
     resolved: list[str] = []

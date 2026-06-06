@@ -13,6 +13,8 @@ from typing import Any, Callable, Dict
 from dotenv import load_dotenv
 
 from scripts.api_usage_guard import get_usage_summary, reset_video_counter
+from scripts.chat_signals import apply_chat_spikes_to_analyses, load_chat_spike_times
+from scripts.config_rollout import apply_rollout_defaults, build_features_applied
 from scripts.detection_profiles import load_profile, merge_profile_weights
 from scripts.clip_metadata import build_clip_report_entry, quality_tier
 from scripts.clip_timing import compute_clip_range
@@ -35,6 +37,7 @@ from scripts.ui_events import (
     emit_clips_ready,
     emit_highlights_detected,
     emit_progress,
+    emit_run_summary,
     emit_ui_notice,
     resolve_clip_paths,
 )
@@ -157,6 +160,13 @@ def run_pipeline(
     analyzer = VisionAnalyzer(vision_config)
     analyses = analyzer.analyze_samples(samples)
     _write_json(report_dir / f"{video_stem}_analysis.json", analyses)
+
+    chat_cfg = config.get("chat_signals", {})
+    if chat_cfg.get("enabled"):
+        spike_times = load_chat_spike_times(chat_cfg.get("chat_log_path"), chat_cfg)
+        apply_chat_spikes_to_analyses(analyses, spike_times, chat_cfg)
+        if spike_times:
+            emit_ui_notice(progress_callback, f"[UI] Chat spikes detected: {len(spike_times)} window(s)")
 
     ai_fallbacks = sum(1 for item in analyses if item.get("provider_error"))
     if ai_fallbacks:
@@ -303,6 +313,9 @@ def run_pipeline(
     if ai_fallbacks:
         detection_mode = f"{provider}_heuristic_fallback"
 
+    quality_tier_counts = _count_quality_tiers(rendered)
+    features_applied = build_features_applied(config, {"enhancements_summary": _summarize_run_enhancements(rendered)})
+
     report = {
         "input_video": str(input_video),
         "duration_seconds": round(duration, 2),
@@ -325,8 +338,11 @@ def run_pipeline(
         "game_profile": detection_profile.get("id", "generic"),
         "api_usage": get_usage_summary(vision_config),
         "enhancements_summary": _summarize_run_enhancements(rendered),
+        "quality_tier_counts": quality_tier_counts,
+        "features_applied": features_applied,
     }
     _write_json(report_dir / f"{video_stem}_run_report.json", report)
+    emit_run_summary(progress_callback, report=report)
     return report
 
 
@@ -480,12 +496,21 @@ def _summarize_run_enhancements(clips: list[dict]) -> dict[str, int]:
         "viral_slowmo_applied": 0,
         "viral_captions_burned": 0,
         "viral_sound_effect_applied": 0,
+        "smart_reframe_applied": 0,
     }
     for clip in clips:
         for key in summary:
             if clip.get(key):
                 summary[key] += 1
     return summary
+
+
+def _count_quality_tiers(clips: list[dict]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for clip in clips:
+        tier = str(clip.get("quality_tier") or quality_tier(clip))
+        counts[tier] = counts.get(tier, 0) + 1
+    return counts
 
 
 def load_config(config_path: str | Path | None = None) -> Dict[str, Any]:
@@ -503,7 +528,7 @@ def load_config(config_path: str | Path | None = None) -> Dict[str, Any]:
         config = bundled_config
     else:
         raise FileNotFoundError(f"Config file not found: {path}")
-    return _apply_env_overrides(config)
+    return apply_rollout_defaults(_apply_env_overrides(config))
 
 
 def _load_bundled_config() -> Dict[str, Any] | None:

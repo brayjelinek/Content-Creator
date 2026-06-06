@@ -17,6 +17,9 @@ DEFAULT_WEIGHTS = {
     "hitmarker_bonus": 20.0,
     "killfeed_bonus": 40.0,
     "low_health_bonus": 15.0,
+    "audio_spike_bonus": 10.0,
+    "audio_spike_threshold": 12.0,
+    "chat_spike_bonus": 15.0,
     "min_final_score": 60.0,
 }
 
@@ -117,6 +120,7 @@ def compute_weighted_score(analysis: dict, weights: dict | None = None) -> dict:
     hitmarker = bool(signals.get("hitmarker_detected", False))
     killfeed = bool(signals.get("killfeed_ocr_match", False))
     low_health = bool(signals.get("low_health_detected", False))
+    chat_spike = bool(signals.get("chat_spike_detected", False))
 
     bonus = 0.0
     if hitmarker:
@@ -125,6 +129,10 @@ def compute_weighted_score(analysis: dict, weights: dict | None = None) -> dict:
         bonus += float(cfg["killfeed_bonus"])
     if low_health:
         bonus += float(cfg["low_health_bonus"])
+    if chat_spike:
+        bonus += float(cfg.get("chat_spike_bonus", 15))
+    if audio_score_0_20 >= float(cfg.get("audio_spike_threshold", 12)):
+        bonus += float(cfg.get("audio_spike_bonus", 10))
 
     final_score = (
         ai_score * float(cfg["ai_weight"])
@@ -140,6 +148,8 @@ def compute_weighted_score(analysis: dict, weights: dict | None = None) -> dict:
         "hitmarker_detected": hitmarker,
         "killfeed_ocr_match": killfeed,
         "low_health_detected": low_health,
+        "chat_spike_detected": chat_spike,
+        "audio_spike_bonus_applied": audio_score_0_20 >= float(cfg.get("audio_spike_threshold", 12)),
         "bonus_points": round(bonus, 2),
         "final_score": round(final_score, 2),
     }

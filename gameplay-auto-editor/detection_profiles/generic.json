@@ -22,6 +22,7 @@
     "hitmarker_bonus": 20,
     "killfeed_bonus": 40,
     "low_health_bonus": 15,
-    "audio_spike_bonus": 10
+    "audio_spike_bonus": 10,
+    "chat_spike_bonus": 15
   }
 }

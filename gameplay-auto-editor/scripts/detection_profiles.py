@@ -116,7 +116,7 @@ def merge_profile_weights(highlight_config: dict, profile: dict[str, Any]) -> di
     merged = dict(highlight_config or {})
     weights = dict(merged.get("weighted_scoring") or {})
     profile_weights = dict(profile.get("score_weights") or {})
-    for key in ("hitmarker_bonus", "killfeed_bonus", "low_health_bonus"):
+    for key in ("hitmarker_bonus", "killfeed_bonus", "low_health_bonus", "audio_spike_bonus", "chat_spike_bonus"):
         if key in profile_weights:
             weights[key] = profile_weights[key]
     merged["weighted_scoring"] = weights

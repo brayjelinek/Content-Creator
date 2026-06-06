@@ -61,6 +61,8 @@ class GameplayAutoEditorApp:
         self.openai_key_var = StringVar(value="")
         self.key_status_var = StringVar(value=self._api_key_status())
         self.ocr_status_var = StringVar(value=self._ocr_status())
+        self.video_queue: list[Path] = []
+        self.batch_reports: list[dict] = []
 
         self._build_ui()
         self._poll_output_queue()
@@ -83,8 +85,18 @@ class GameplayAutoEditorApp:
         file_row = ttk.Frame(controls)
         file_row.pack(fill="x", pady=(0, 10))
         ttk.Button(file_row, text="Choose gameplay video", command=self.choose_video).pack(side=LEFT)
+        ttk.Button(file_row, text="Add to queue", command=self.add_to_queue).pack(side=LEFT, padx=(8, 0))
+        ttk.Button(file_row, text="Clear queue", command=self.clear_queue).pack(side=LEFT, padx=(8, 0))
         self.file_label = ttk.Label(file_row, text="No video selected")
         self.file_label.pack(side=LEFT, padx=12)
+
+        queue_row = ttk.Frame(controls)
+        queue_row.pack(fill="x", pady=(0, 10))
+        ttk.Label(queue_row, text="Batch queue:").pack(side=LEFT)
+        self.queue_listbox = ttk.Treeview(queue_row, columns=("video",), show="headings", height=3)
+        self.queue_listbox.heading("video", text="Queued videos")
+        self.queue_listbox.column("video", width=760, stretch=True)
+        self.queue_listbox.pack(side=LEFT, fill="x", expand=True, padx=(8, 0))
 
         settings_row = ttk.Frame(controls)
         settings_row.pack(fill="x")
@@ -110,7 +122,7 @@ class GameplayAutoEditorApp:
 
         action_row = ttk.Frame(outer)
         action_row.pack(fill="x", pady=(0, 12))
-        self.generate_button = ttk.Button(action_row, text="Generate sample clips", command=self.generate_clips)
+        self.generate_button = ttk.Button(action_row, text="Generate clips", command=self.generate_clips)
         self.generate_button.pack(side=LEFT)
         ttk.Button(action_row, text="Open final clips folder", command=lambda: open_path(PROJECT_ROOT / "final_clips")).pack(
             side=LEFT,
@@ -206,8 +218,31 @@ class GameplayAutoEditorApp:
         self.file_label.configure(text=self.selected_video.name)
         self.status_var.set("Ready to generate clips.")
 
-    def generate_clips(self) -> None:
+    def add_to_queue(self) -> None:
         if not self.selected_video:
+            messagebox.showinfo(APP_TITLE, "Choose a gameplay video first.")
+            return
+        if self.selected_video in self.video_queue:
+            self.status_var.set("Video already in queue.")
+            return
+        self.video_queue.append(self.selected_video)
+        self._refresh_queue_list()
+        self.status_var.set(f"{len(self.video_queue)} video(s) queued.")
+
+    def clear_queue(self) -> None:
+        self.video_queue.clear()
+        self._refresh_queue_list()
+        self.status_var.set("Queue cleared.")
+
+    def _refresh_queue_list(self) -> None:
+        for item in self.queue_listbox.get_children():
+            self.queue_listbox.delete(item)
+        for index, path in enumerate(self.video_queue, start=1):
+            self.queue_listbox.insert("", END, iid=str(index), values=(path.name,))
+
+    def generate_clips(self) -> None:
+        targets = list(self.video_queue) if self.video_queue else ([self.selected_video] if self.selected_video else [])
+        if not targets:
             messagebox.showinfo(APP_TITLE, "Choose a gameplay video first.")
             return
 
@@ -233,7 +268,7 @@ class GameplayAutoEditorApp:
                     "Install from https://github.com/UB-Mannheim/tesseract/wiki"
                 )
 
-            preflight = preflight_pipeline(self.selected_video, config.get("rendering", {}))
+            preflight = preflight_pipeline(targets[0], config.get("rendering", {}))
             if not preflight["ok"]:
                 messagebox.showerror(APP_TITLE, "\n".join(preflight["errors"]))
                 return
@@ -243,14 +278,52 @@ class GameplayAutoEditorApp:
 
         settings = self._settings_override()
         self.generate_button.configure(state="disabled")
-        self.status_var.set("Generating clips. This can take a few minutes...")
+        self.batch_reports = []
+        self.status_var.set(f"Generating clips for {len(targets)} video(s)...")
         self.progress_var.set(0.0)
         self.stage_var.set("Starting clip generation...")
         self.progress_text.delete("1.0", END)
         self._reset_results_panel()
 
-        thread = threading.Thread(target=self._run_generation_worker, args=(self.selected_video, settings), daemon=True)
+        thread = threading.Thread(target=self._run_batch_worker, args=(targets, settings), daemon=True)
         thread.start()
+
+    def _run_batch_worker(self, targets: list[Path], settings: dict) -> None:
+        writer = QueueWriter(self.output_queue)
+        ui_session = attach_ui_log_handler(self.output_queue)
+
+        def progress_callback(event: dict) -> None:
+            self.output_queue.put(("EVENT", event))
+
+        combined_report: dict | None = None
+        try:
+            with redirect_stdout(writer):
+                for index, video_path in enumerate(targets, start=1):
+                    self.output_queue.put(f"\n=== Batch {index}/{len(targets)}: {video_path.name} ===\n")
+                    report = run_pipeline(
+                        video_path,
+                        config_override=settings,
+                        progress_callback=progress_callback,
+                    )
+                    self.batch_reports.append(report)
+                    combined_report = report
+            if combined_report and len(self.batch_reports) > 1:
+                combined_report = self._merge_batch_reports(self.batch_reports)
+            self.output_queue.put(("DONE", combined_report or {}))
+            if self.video_queue:
+                self.video_queue.clear()
+                self.root.after(0, self._refresh_queue_list)
+        except Exception as exc:  # noqa: BLE001
+            self.output_queue.put(("ERROR", f"{exc}\n\n{traceback.format_exc()}"))
+        finally:
+            detach_ui_log_handler(ui_session)
+
+    def _merge_batch_reports(self, reports: list[dict]) -> dict:
+        last = dict(reports[-1])
+        last["batch_count"] = len(reports)
+        last["clips_created"] = sum(int(report.get("clips_created", 0)) for report in reports)
+        last["batch_videos"] = [str(report.get("input_video", "")) for report in reports]
+        return last
 
     def save_openai_key(self) -> None:
         key = self.openai_key_var.get().strip()
@@ -277,26 +350,6 @@ class GameplayAutoEditorApp:
         self.openai_key_var.set("")
         self.key_status_var.set("OpenAI key saved. Vision mode is set to openai.")
         self.status_var.set("API key saved.")
-
-    def _run_generation_worker(self, video_path: Path, settings: dict) -> None:
-        writer = QueueWriter(self.output_queue)
-        ui_session = attach_ui_log_handler(self.output_queue)
-
-        def progress_callback(event: dict) -> None:
-            self.output_queue.put(("EVENT", event))
-
-        try:
-            with redirect_stdout(writer):
-                report = run_pipeline(
-                    video_path,
-                    config_override=settings,
-                    progress_callback=progress_callback,
-                )
-            self.output_queue.put(("DONE", report))
-        except Exception as exc:  # noqa: BLE001 - show friendly UI errors.
-            self.output_queue.put(("ERROR", f"{exc}\n\n{traceback.format_exc()}"))
-        finally:
-            detach_ui_log_handler(ui_session)
 
     def _poll_output_queue(self) -> None:
         try:
@@ -336,6 +389,17 @@ class GameplayAutoEditorApp:
             self._append_progress(message)
         elif event_type in ("clips_ready", "refresh_clips_ui"):
             self._apply_clips_event(event)
+        elif event_type == "run_summary":
+            self._append_progress(message)
+            report = event.get("report") or {}
+            features = report.get("features_applied") or {}
+            enabled = [name.replace("_", " ") for name, active in features.items() if active]
+            if enabled:
+                self._append_progress("Active features: " + ", ".join(enabled))
+            tiers = report.get("quality_tier_counts") or {}
+            if tiers:
+                tier_text = ", ".join(f"{key}={value}" for key, value in sorted(tiers.items()))
+                self._append_progress(f"Quality tiers: {tier_text}")
 
     def _apply_clips_event(self, event: dict) -> None:
         clip_count = int(event.get("count", 0))
@@ -356,9 +420,14 @@ class GameplayAutoEditorApp:
         self.report = report
         self.generate_button.configure(state="normal")
         clips_created = int(report.get("clips_created", 0))
+        batch_count = int(report.get("batch_count", 0))
         self.progress_var.set(100.0)
-        self.stage_var.set(f"Done. Created {clips_created} clip(s).")
-        self.status_var.set(f"Done. Created {clips_created} clip(s).")
+        if batch_count > 1:
+            self.stage_var.set(f"Batch done. Processed {batch_count} video(s), created {clips_created} clip(s).")
+            self.status_var.set(f"Batch done. {batch_count} video(s), {clips_created} clip(s).")
+        else:
+            self.stage_var.set(f"Done. Created {clips_created} clip(s).")
+            self.status_var.set(f"Done. Created {clips_created} clip(s).")
         if clips_created == 0:
             reason = report.get("failure_reason")
             log_file = report.get("log_file", "")

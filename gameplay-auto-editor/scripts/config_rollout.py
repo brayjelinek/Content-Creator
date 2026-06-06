@@ -1,0 +1,109 @@
+"""Stable feature rollout defaults merged into user config."""
+
+from __future__ import annotations
+
+from copy import deepcopy
+from typing import Any
+
+DEFAULT_ROLLOUT: dict[str, Any] = {
+    "stable_features": {
+        "min_clip_duration": True,
+        "adaptive_padding": True,
+        "platform_presets": True,
+        "viral_polish_always_on": True,
+        "burn_captions_on_overlay_fail": True,
+        "game_profiles": True,
+        "quality_tiers": True,
+        "enhancement_badges": True,
+    },
+    "optional_features": {
+        "smart_reframe": False,
+        "sound_effects": False,
+        "chat_signals": False,
+        "batch_queue": True,
+    },
+}
+
+DEFAULT_CHAT_SIGNALS: dict[str, Any] = {
+    "enabled": False,
+    "chat_log_path": "",
+    "window_seconds": 2.0,
+    "min_messages_per_window": 5,
+    "match_window_seconds": 2.5,
+    "score_bonus": 15,
+}
+
+
+def apply_rollout_defaults(config: dict[str, Any]) -> dict[str, Any]:
+    """Merge rollout defaults without overriding explicit user settings."""
+    merged = deepcopy(config)
+
+    rollout = dict(DEFAULT_ROLLOUT)
+    rollout.update(dict(merged.get("rollout") or {}))
+    rollout["stable_features"] = {
+        **DEFAULT_ROLLOUT["stable_features"],
+        **dict((merged.get("rollout") or {}).get("stable_features") or {}),
+    }
+    rollout["optional_features"] = {
+        **DEFAULT_ROLLOUT["optional_features"],
+        **dict((merged.get("rollout") or {}).get("optional_features") or {}),
+    }
+    merged["rollout"] = rollout
+
+    chat = dict(DEFAULT_CHAT_SIGNALS)
+    chat.update(dict(merged.get("chat_signals") or {}))
+    merged["chat_signals"] = chat
+
+    highlight = dict(merged.get("highlight_detection") or {})
+    weights = dict(highlight.get("weighted_scoring") or {})
+    weights.setdefault("audio_spike_bonus", 10)
+    weights.setdefault("audio_spike_threshold", 12)
+    weights.setdefault("chat_spike_bonus", chat["score_bonus"])
+    highlight["weighted_scoring"] = weights
+    merged["highlight_detection"] = highlight
+
+    rendering = dict(merged.get("rendering") or {})
+    viral = dict(rendering.get("viral_enhancements") or {})
+    smart = dict(rendering.get("smart_reframe") or {})
+
+    if rollout["stable_features"].get("viral_polish_always_on", True):
+        viral.setdefault("always_apply_polish", True)
+    if rollout["stable_features"].get("burn_captions_on_overlay_fail", True):
+        viral.setdefault("burn_captions_when_overlay_missing", True)
+    if not rollout["optional_features"].get("smart_reframe", False):
+        smart["enabled"] = bool(smart.get("enabled", False))
+    if not rollout["optional_features"].get("sound_effects", False):
+        viral["sound_effects_enabled"] = bool(viral.get("sound_effects_enabled", False))
+
+    rendering["viral_enhancements"] = viral
+    rendering["smart_reframe"] = smart
+    merged["rendering"] = rendering
+
+    if not rollout["optional_features"].get("chat_signals", False):
+        merged["chat_signals"]["enabled"] = bool(merged["chat_signals"].get("enabled", False))
+
+    return merged
+
+
+def build_features_applied(config: dict[str, Any], report: dict[str, Any] | None = None) -> dict[str, bool]:
+    """Summarize which rollout features were active for a run."""
+    rollout = dict(config.get("rollout") or {})
+    stable = dict(rollout.get("stable_features") or {})
+    optional = dict(rollout.get("optional_features") or {})
+    rendering = dict(config.get("rendering") or {})
+    viral = dict(rendering.get("viral_enhancements") or {})
+    smart = dict(rendering.get("smart_reframe") or {})
+    chat = dict(config.get("chat_signals") or {})
+    enhancements = dict((report or {}).get("enhancements_summary") or {})
+
+    return {
+        "min_clip_duration": bool(stable.get("min_clip_duration", True)),
+        "platform_presets": bool(stable.get("platform_presets", True)),
+        "game_profiles": bool(stable.get("game_profiles", True)),
+        "quality_tiers": bool(stable.get("quality_tiers", True)),
+        "viral_polish": bool(enhancements.get("viral_enhanced", 0)) or bool(viral.get("always_apply_polish", True)),
+        "smart_reframe": bool(enhancements.get("smart_reframe_applied", 0)) or bool(smart.get("enabled", False)),
+        "chat_signals": bool(chat.get("enabled", False)),
+        "sound_effects": bool(viral.get("sound_effects_enabled", False)),
+        "batch_queue": bool(optional.get("batch_queue", True)),
+    }

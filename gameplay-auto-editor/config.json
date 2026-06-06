@@ -1,4 +1,30 @@
 {
+  "rollout": {
+    "stable_features": {
+      "min_clip_duration": true,
+      "adaptive_padding": true,
+      "platform_presets": true,
+      "viral_polish_always_on": true,
+      "burn_captions_on_overlay_fail": true,
+      "game_profiles": true,
+      "quality_tiers": true,
+      "enhancement_badges": true
+    },
+    "optional_features": {
+      "smart_reframe": false,
+      "sound_effects": false,
+      "chat_signals": false,
+      "batch_queue": true
+    }
+  },
+  "chat_signals": {
+    "enabled": false,
+    "chat_log_path": "",
+    "window_seconds": 2.0,
+    "min_messages_per_window": 5,
+    "match_window_seconds": 2.5,
+    "score_bonus": 15
+  },
   "vision": {
     "provider": "heuristic",
     "openai_api_key": "",
@@ -46,6 +72,9 @@
       "hitmarker_bonus": 20,
       "killfeed_bonus": 40,
       "low_health_bonus": 15,
+      "audio_spike_bonus": 10,
+      "audio_spike_threshold": 12,
+      "chat_spike_bonus": 15,
       "min_final_score": 60
     },
     "timestamp_smoothing": {
