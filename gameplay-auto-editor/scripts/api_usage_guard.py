@@ -24,6 +24,7 @@ _SESSION_DISABLED = False
 _RUN_DISABLED = False
 
 _logged_session_limit = False
+_logged_session_limit = False
 _logged_video_limit = False
 _logged_run_quota = False
 _logged_fallback_limit = False
@@ -33,11 +34,12 @@ _logged_partial_ai = False
 def reset_video_counter() -> None:
     """Reset per-video counters at the start of each pipeline run."""
     global _VIDEO_CALLS, _RUN_DISABLED
-    global _logged_video_limit, _logged_run_quota, _logged_fallback_limit, _logged_partial_ai
+    global _logged_video_limit, _logged_session_limit, _logged_run_quota, _logged_fallback_limit, _logged_partial_ai
 
     _VIDEO_CALLS = 0
     _RUN_DISABLED = False
     _logged_video_limit = False
+    _logged_session_limit = False
     _logged_run_quota = False
     _logged_fallback_limit = False
     _logged_partial_ai = False
@@ -103,7 +105,7 @@ def record_api_call(config: dict | None) -> tuple[int, int]:
 
 def log_limit_fallback(reason: str) -> None:
     """Log limit-triggered fallback once per reason to avoid spam."""
-    global _logged_fallback_limit, _logged_video_limit, _logged_session_limit, _logged_partial_ai
+    global _logged_fallback_limit, _logged_video_limit, _logged_session_limit, _logged_run_quota, _logged_partial_ai
 
     if reason == "video" and not _logged_video_limit:
         logger.info("[AI] API limit reached — switching to heuristic fallback")
