@@ -40,8 +40,15 @@ jobs:
       - name: Build desktop app
         run: python build_desktop_app.py
 
+      - name: Set artifact name
+        id: artifact
+        shell: bash
+        run: |
+          commit_short=$(python -c "import json; print(json.load(open('build_info.json'))['commit_short'])")
+          echo "name=Gameplay-Auto-Editor-Windows-${commit_short}" >> "$GITHUB_OUTPUT"
+
       - name: Upload desktop app artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Gameplay-Auto-Editor-Windows
+          name: ${{ steps.artifact.outputs.name }}
           path: gameplay-auto-editor/dist/

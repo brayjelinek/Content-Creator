@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
-APP_NAME = "Gameplay Auto Editor"
+APP_BASE_NAME = "Gameplay Auto Editor"
 ROOT = Path(__file__).resolve().parent
 
 
@@ -20,7 +20,8 @@ def main() -> int:
     fonts_dir = ROOT / "fonts"
     fonts_dir.mkdir(exist_ok=True)
     _prepare_bundled_font(fonts_dir)
-    build_info_path = _write_build_info()
+    build_info_path, build_info = _write_build_info()
+    app_name = _release_folder_name(build_info)
 
     command = [
         sys.executable,
@@ -30,7 +31,7 @@ def main() -> int:
         "--clean",
         "--windowed",
         "--name",
-        APP_NAME,
+        app_name,
         "--add-data",
         _data_arg(ROOT / "config.json", "."),
         "--add-data",
@@ -74,9 +75,9 @@ def main() -> int:
     subprocess.run(command, cwd=ROOT, check=True)
 
     dist_dir = ROOT / "dist"
-    output = dist_dir / APP_NAME
-    _write_start_here(dist_dir)
-    _write_top_level_launcher(dist_dir)
+    output = dist_dir / app_name
+    _write_start_here(dist_dir, build_info, app_name)
+    _write_top_level_launcher(dist_dir, app_name)
     print(f"\nBuild complete: {output}")
     print(f"Download or copy everything in: {dist_dir}")
     print("Open START_HERE.txt for simple click-by-click instructions.")
@@ -138,7 +139,7 @@ def _data_arg(source: Path, destination: str) -> str:
     return f"{source}{os.pathsep}{destination}"
 
 
-def _write_build_info() -> Path:
+def _write_build_info() -> tuple[Path, dict[str, str]]:
     commit = os.environ.get("GITHUB_SHA")
     branch = os.environ.get("GITHUB_REF_NAME")
     if not commit:
@@ -169,24 +170,38 @@ def _write_build_info() -> Path:
     build_info_path = ROOT / "build_info.json"
     build_info_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     print(f"Build info: {payload['commit_short']} ({branch})")
-    return build_info_path
+    return build_info_path, payload
 
 
-def _write_start_here(dist_dir: Path) -> None:
+def _release_folder_name(build_info: dict[str, str]) -> str:
+    commit = build_info.get("commit_short") or "dev"
+    return f"{APP_BASE_NAME} ({commit})"
+
+
+def _write_start_here(dist_dir: Path, build_info: dict[str, str], app_name: str) -> None:
+    commit = build_info.get("commit_short") or "unknown"
     if sys.platform.startswith("win"):
         instructions = [
-            "Gameplay Auto Editor - Windows",
+            f"Gameplay Auto Editor - Windows ({commit})",
             "",
-            "1. Unzip the downloaded artifact first.",
-            "2. Open the folder.",
-            "3. Double-click OPEN_GAMEPLAY_AUTO_EDITOR.bat.",
+            "IMPORTANT - avoid the Replace files prompt:",
+            "1. Right-click the downloaded zip -> Extract All...",
+            "2. Choose a NEW folder, for example Desktop\\Gameplay Auto Editor " + commit,
+            "3. Do NOT extract on top of an older copy in Downloads.",
             "",
-            "Verify you have the latest build:",
-            "- The app header should show a Build <commit> timestamp.",
-            "- You should see sections named Create clips, Review & export, and Tools & integrations.",
+            "Extraction can take 1-2 minutes. This package is about 180 MB.",
             "",
-            "If that does not work, open this file instead:",
-            "Gameplay Auto Editor\\Gameplay Auto Editor.exe",
+            "After extraction:",
+            "1. Open the new folder.",
+            "2. Double-click OPEN_GAMEPLAY_AUTO_EDITOR.bat.",
+            "",
+            "Verify you have this build:",
+            f"- Folder name ends with ({commit})",
+            "- App header shows Build " + commit,
+            "- Sections: Create clips, Review & export, Tools & integrations",
+            "",
+            "If the launcher does not work, open:",
+            f"{app_name}\\{app_name}.exe",
             "",
             "You do not need to choose another program to open it.",
         ]
@@ -220,7 +235,7 @@ def _write_start_here(dist_dir: Path) -> None:
     (dist_dir / "START_HERE.txt").write_text("\n".join(instructions) + "\n", encoding="utf-8")
 
 
-def _write_top_level_launcher(dist_dir: Path) -> None:
+def _write_top_level_launcher(dist_dir: Path, app_name: str) -> None:
     if sys.platform.startswith("win"):
         launcher = dist_dir / "OPEN_GAMEPLAY_AUTO_EDITOR.bat"
         launcher.write_text(
@@ -228,7 +243,7 @@ def _write_top_level_launcher(dist_dir: Path) -> None:
                 [
                     "@echo off",
                     'cd /d "%~dp0"',
-                    f'start "" "{APP_NAME}\\{APP_NAME}.exe"',
+                    f'start "" "{app_name}\\{app_name}.exe"',
                     "",
                 ]
             ),
@@ -245,7 +260,7 @@ def _write_top_level_launcher(dist_dir: Path) -> None:
                     "#!/usr/bin/env bash",
                     "set -euo pipefail",
                     'APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"',
-                    f'exec "$APP_DIR/{APP_NAME}/{APP_NAME}"',
+                    f'exec "$APP_DIR/{app_name}/{app_name}"',
                     "",
                 ]
             ),
