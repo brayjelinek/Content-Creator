@@ -25,15 +25,18 @@ def highlight_matches_prompt(highlight: dict, prompt: str | None) -> bool:
     if not terms:
         return True
 
+    raw = highlight.get("raw_analysis") or {}
     haystack = " ".join(
         [
             str(highlight.get("summary", "")),
             str(highlight.get("reason", "")),
             str(highlight.get("hook_text", "")),
             str(highlight.get("caption_text", "")),
+            str(highlight.get("transcript_snippet", "")),
             " ".join(str(item) for item in highlight.get("categories", [])),
-            str((highlight.get("raw_analysis") or {}).get("summary", "")),
-            str((highlight.get("raw_analysis") or {}).get("transcript", "")),
+            str(raw.get("summary", "")),
+            str(raw.get("transcript", "")),
+            str(raw.get("transcript_snippet", "")),
         ]
     ).lower()
     return any(term in haystack for term in terms)

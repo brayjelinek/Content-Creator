@@ -276,13 +276,17 @@ def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any
 
 
 def _apply_phase_preset(config: dict[str, Any], phase: str) -> dict[str, Any]:
-    """Layer phased defaults on top of user config so presets can enable optional features."""
+    """Layer phased defaults on top of user config; explicit optional_features overrides win."""
     if phase == "custom":
         return deepcopy(config)
 
+    user_optional = dict((config.get("rollout") or {}).get("optional_features") or {})
     preset = dict(ROLLOUT_PHASES[phase].get("config") or {})
+    preset_optional = dict((preset.get("rollout") or {}).get("optional_features") or {})
     merged = _deep_merge(deepcopy(config), preset)
-    merged.setdefault("rollout", {})["phase"] = phase
+    merged.setdefault("rollout", {})
+    merged["rollout"]["optional_features"] = {**preset_optional, **user_optional}
+    merged["rollout"]["phase"] = phase
     return merged
 
 
@@ -312,12 +316,16 @@ def apply_rollout_defaults(config: dict[str, Any]) -> dict[str, Any]:
     transcription.update(dict(merged.get("transcription") or {}))
     merged["transcription"] = transcription
 
-    highlight = dict(merged.get("highlight_detection") or {})
+    from scripts.highlight_scoring import resolve_min_final_score, sync_weighted_threshold
+
+    highlight = sync_weighted_threshold(dict(merged.get("highlight_detection") or {}))
     weights = dict(highlight.get("weighted_scoring") or {})
     weights.setdefault("audio_spike_bonus", 10)
     weights.setdefault("audio_spike_threshold", 12)
     weights.setdefault("chat_spike_bonus", chat["score_bonus"])
+    weights["min_final_score"] = resolve_min_final_score(highlight, weights)
     highlight["weighted_scoring"] = weights
+    highlight["min_score"] = weights["min_final_score"]
     stable = dict(rollout.get("stable_features") or {})
     if stable.get("industry_timing", True):
         timing = dict(INDUSTRY_TIMING_DEFAULTS)
@@ -338,22 +346,22 @@ def apply_rollout_defaults(config: dict[str, Any]) -> dict[str, Any]:
     if rollout["stable_features"].get("burn_captions_on_overlay_fail", True):
         viral.setdefault("burn_captions_when_overlay_missing", True)
 
-    if optional.get("smart_reframe", False):
-        smart["enabled"] = True
-    else:
+    if not optional.get("smart_reframe", False):
         smart["enabled"] = False
+    else:
+        smart["enabled"] = bool(smart.get("enabled", True))
 
     if optional.get("sound_effects", False):
         viral["sound_effects_enabled"] = True
     else:
-        viral["sound_effects_enabled"] = False
+        viral["sound_effects_enabled"] = bool(viral.get("sound_effects_enabled", False))
 
     if optional.get("styled_ass_captions", False):
         viral["styled_ass_captions_enabled"] = True
-        viral["ass_karaoke_enabled"] = True
+        viral["ass_karaoke_enabled"] = bool(viral.get("ass_karaoke_enabled", True))
     else:
-        viral["styled_ass_captions_enabled"] = False
-        viral["ass_karaoke_enabled"] = False
+        viral["styled_ass_captions_enabled"] = bool(viral.get("styled_ass_captions_enabled", False))
+        viral["ass_karaoke_enabled"] = bool(viral.get("ass_karaoke_enabled", False))
 
     rendering["viral_enhancements"] = viral
     rendering["smart_reframe"] = smart
@@ -365,11 +373,20 @@ def apply_rollout_defaults(config: dict[str, Any]) -> dict[str, Any]:
         chat["enabled"] = False
     merged["chat_signals"] = chat
 
-    if optional.get("whisper_transcription", False):
-        transcription["enabled"] = True
-    else:
+    if not optional.get("whisper_transcription", False):
         transcription["enabled"] = False
+    elif "enabled" in transcription:
+        transcription["enabled"] = bool(transcription["enabled"])
+    else:
+        transcription["enabled"] = True
     merged["transcription"] = transcription
+
+    if transcription.get("enabled") and optional.get("styled_ass_captions", False):
+        if "styled_ass_captions_enabled" not in viral:
+            viral["styled_ass_captions_enabled"] = True
+            viral["ass_karaoke_enabled"] = True
+        rendering["viral_enhancements"] = viral
+        merged["rendering"] = rendering
 
     social = dict(DEFAULT_SOCIAL_PUBLISH)
     social.update(dict(merged.get("social_publish") or {}))

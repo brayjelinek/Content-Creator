@@ -47,11 +47,15 @@ def count_validation_signals(highlight: dict, cfg: dict[str, Any]) -> int:
 
 
 def is_synthetic_fallback_highlight(highlight: dict) -> bool:
-    """True only for pipeline-generated synthetic clips, not weighted scoring fallbacks."""
+    """True for pipeline-generated or low-confidence fallback clips."""
     if str(highlight.get("id", "")) == "highlight_fallback":
         return True
     mode = str(highlight.get("selection_mode", ""))
-    return mode in {"fallback_single", "pipeline_fallback"}
+    if mode.startswith("fallback"):
+        return True
+    if "fallback" in [str(item).lower() for item in highlight.get("categories", [])]:
+        return True
+    return mode in {"fallback_single", "pipeline_fallback", "weighted_fallback"}
 
 
 def _is_fallback_moment(highlight: dict) -> bool:

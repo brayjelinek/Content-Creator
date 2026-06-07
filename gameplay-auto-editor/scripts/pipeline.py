@@ -26,7 +26,7 @@ from scripts.logging_utils import setup_pipeline_logging
 from scripts.microclip_sampler import extract_microclips
 from scripts.moment_validator import enrich_highlight_validation
 from scripts.ocr_utils import initialize_ocr
-from scripts.pipeline_validation import preflight_pipeline
+from scripts.pipeline_validation import check_optional_enhancements, preflight_pipeline
 from scripts.pipeline_control import PipelineCancelled, get_pipeline_control, reset_pipeline_control
 from scripts.prompt_clip_filter import filter_highlights_by_prompt
 from scripts.transcription import enrich_highlights_with_transcription
@@ -186,6 +186,12 @@ def _execute_pipeline(
     ocr_status = initialize_ocr(config.get("ocr", {}))
     if not ocr_status.get("available"):
         emit_ui_notice(progress_callback, "[UI] OCR unavailable — skipping")
+    else:
+        emit_ui_notice(progress_callback, "[UI] Killfeed OCR ready for scoring")
+
+    optional_tools = check_optional_enhancements(config)
+    for notice in optional_tools.get("notices", []):
+        emit_ui_notice(progress_callback, notice)
 
     frame_dir = paths["processed"] / "frames" / video_stem
     report_dir = paths["processed"] / "reports"
@@ -254,11 +260,12 @@ def _execute_pipeline(
     )
     _check_cancel("detecting")
     highlights = detect_highlights(analyses, duration, highlight_config)
-    highlights = _ensure_minimum_highlights(highlights, analyses, samples, duration, highlight_config)
-    clip_prompt = str(highlight_config.get("clip_prompt") or config.get("clip_prompt") or "").strip()
-    if clip_prompt:
-        highlights = filter_highlights_by_prompt(highlights, clip_prompt)
-        emit_ui_notice(progress_callback, f"[UI] Prompt filter active: {clip_prompt}")
+    strict_quality = bool(highlight_config.get("strict_quality_mode", False))
+    if not strict_quality:
+        highlights = _ensure_minimum_highlights(highlights, analyses, samples, duration, highlight_config)
+    elif not highlights:
+        logger.warning("[Pipeline] Strict quality mode — no highlights met the threshold.")
+        emit_ui_notice(progress_callback, "[UI] Strict quality mode: no clips met your highlight bar.")
     logger.info("[Pipeline] Highlights detected: %s", len(highlights))
     emit_highlights_detected(progress_callback, count=len(highlights), percent=55)
 
@@ -287,6 +294,11 @@ def _execute_pipeline(
             transcription_cfg,
             vision_config,
         )
+
+    clip_prompt = str(highlight_config.get("clip_prompt") or config.get("clip_prompt") or "").strip()
+    if clip_prompt and highlights:
+        highlights = filter_highlights_by_prompt(highlights, clip_prompt)
+        emit_ui_notice(progress_callback, f"[UI] Prompt filter active: {clip_prompt}")
 
     logger.info("[Pipeline] Generating hooks and captions")
     captioned_highlights = generate_captions(
@@ -339,7 +351,7 @@ def _execute_pipeline(
     )
 
     used_fallback_render = False
-    if len(rendered) == 0:
+    if len(rendered) == 0 and not strict_quality:
         logger.warning("[Pipeline] Render produced zero clips — attempting fallback clip.")
         fallback_highlight = _build_fallback_highlight(analyses, samples, duration, highlight_config)
         fallback_captioned = generate_captions(
@@ -510,6 +522,8 @@ def _extract_analysis_samples(
                 use_stream_copy=bool(microclip_config.get("use_stream_copy", True)),
                 parallel_workers=parallel_workers,
                 cancel_check=cancel_check,
+                adaptive_sampling=bool(microclip_config.get("adaptive_sampling", {}).get("enabled", False)),
+                adaptive_config=microclip_config.get("adaptive_sampling"),
             )
             if samples:
                 emit_progress(

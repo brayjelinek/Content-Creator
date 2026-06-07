@@ -78,10 +78,10 @@ class GameplayAutoEditorApp:
         self.stage_var = StringVar(value=copy.STATUS_IDLE)
 
         self.provider_var = StringVar(value=self._initial_provider())
-        self.max_clips_var = StringVar(value="5")
-        self.min_score_var = StringVar(value="25")
-        self.interval_var = StringVar(value="3")
-        self.max_frames_var = StringVar(value="10")
+        self.max_clips_var = StringVar(value=self._initial_max_clips())
+        self.min_score_var = StringVar(value=self._initial_min_score())
+        self.interval_var = StringVar(value=self._initial_scan_interval())
+        self.max_frames_var = StringVar(value=self._initial_max_frames())
         self.platform_var = StringVar(value=self._initial_platform_preset())
         self.theme_var = StringVar(value=self._initial_theme())
         self.game_profile_var = StringVar(value=self._initial_game_profile())
@@ -1671,6 +1671,9 @@ class GameplayAutoEditorApp:
                 "min_score": int(self.min_score_var.get()),
                 "game_profile": self._game_profile_value(),
                 "clip_prompt": self.clip_prompt_var.get().strip(),
+                "weighted_scoring": {
+                    "min_final_score": int(self.min_score_var.get()),
+                },
             },
         }
         if chat_path:
@@ -1726,6 +1729,35 @@ class GameplayAutoEditorApp:
         except Exception:  # noqa: BLE001
             value = "off"
         return copy.REFRAME_VALUE_TO_LABEL.get(value, value)
+
+    def _initial_min_score(self) -> str:
+        try:
+            highlight = load_config().get("highlight_detection", {})
+            value = highlight.get("min_score", highlight.get("weighted_scoring", {}).get("min_final_score", 60))
+            return str(int(value))
+        except Exception:  # noqa: BLE001
+            return "60"
+
+    def _initial_max_clips(self) -> str:
+        try:
+            return str(int(load_config().get("highlight_detection", {}).get("max_clips", 5)))
+        except Exception:  # noqa: BLE001
+            return "5"
+
+    def _initial_scan_interval(self) -> str:
+        try:
+            return str(int(load_config().get("vision", {}).get("analysis_interval_seconds", 3)))
+        except Exception:  # noqa: BLE001
+            return "3"
+
+    def _initial_max_frames(self) -> str:
+        try:
+            vision = load_config().get("vision", {})
+            micro = vision.get("microclip_sampling", {})
+            value = micro.get("max_samples", vision.get("max_frames_to_analyze", 60))
+            return str(int(value))
+        except Exception:  # noqa: BLE001
+            return "60"
 
     def _initial_rollout_phase(self) -> str:
         try:

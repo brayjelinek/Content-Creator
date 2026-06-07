@@ -90,6 +90,51 @@ def preflight_pipeline(
     return {"ok": ok, "checks": checks, "errors": errors, "font_path": font_path}
 
 
+def whisper_cli_available() -> bool:
+    return shutil.which("whisper") is not None
+
+
+def check_optional_enhancements(config: dict | None = None) -> dict:
+    """Return non-blocking notices for optional quality tools."""
+    cfg = dict(config or {})
+    notices: list[str] = []
+    checks: dict[str, bool] = {}
+
+    transcription = dict(cfg.get("transcription") or {})
+    if transcription.get("enabled"):
+        provider = str(transcription.get("provider", "whisper_cli")).lower()
+        if provider == "whisper_cli":
+            checks["whisper_cli"] = whisper_cli_available()
+            if not checks["whisper_cli"]:
+                notices.append(
+                    "[UI] Whisper CLI not found — install openai-whisper for speech-aligned captions or use OpenAI transcription."
+                )
+
+    ocr_cfg = dict(cfg.get("ocr") or {})
+    if ocr_cfg.get("enabled", True):
+        try:
+            from scripts.ocr_utils import initialize_ocr
+
+            status = initialize_ocr(ocr_cfg)
+            checks["tesseract"] = bool(status.get("available"))
+            if not checks["tesseract"]:
+                notices.append("[UI] Tesseract OCR not found — killfeed bonuses will be skipped.")
+        except Exception:  # noqa: BLE001
+            checks["tesseract"] = False
+
+    viral = dict((cfg.get("rendering") or {}).get("viral_enhancements") or {})
+    if viral.get("sound_effects_enabled"):
+        from pathlib import Path as _Path
+
+        custom = str(viral.get("sound_effect_path") or "").strip()
+        bundled = _Path(__file__).resolve().parents[1] / "assets" / "sfx" / "impact.mp3"
+        checks["impact_sfx"] = bool(custom and _Path(custom).exists()) or bundled.exists()
+        if not checks["impact_sfx"]:
+            notices.append("[UI] Impact SFX enabled but no sound file found — add assets/sfx/impact.mp3 or set sound_effect_path.")
+
+    return {"checks": checks, "notices": notices}
+
+
 def validate_highlight_timestamps(highlight: dict, video_duration: float) -> None:
     """Confirm highlight start/end fall within the source video duration."""
     start = float(highlight.get("start", 0))

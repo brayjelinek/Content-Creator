@@ -13,14 +13,20 @@
       "industry_timing": true
     },
     "optional_features": {
-      "smart_reframe": false,
-      "sound_effects": false,
-      "chat_signals": false,
-      "styled_ass_captions": false,
-      "whisper_transcription": false,
+      "smart_reframe": true,
+      "sound_effects": true,
+      "chat_signals": true,
+      "styled_ass_captions": true,
+      "whisper_transcription": true,
       "batch_queue": true,
       "direct_publish": false,
-      "embedded_agent": false
+      "embedded_agent": true,
+      "pipeline_cancel": true,
+      "parallel_sampling": true,
+      "parallel_render": true,
+      "single_pass_render": true,
+      "streak_scoring": true,
+      "prompt_filter": true
     }
   },
   "embedded_agent": {
@@ -80,7 +86,15 @@
       "duration_seconds": 1.5,
       "max_samples": 60,
       "use_stream_copy": true,
-      "parallel_workers": 3
+      "parallel_workers": 3,
+      "adaptive_sampling": {
+        "enabled": true,
+        "coarse_interval_seconds": 2.0,
+        "dense_interval_seconds": 0.5,
+        "peak_window_seconds": 3.0,
+        "peak_count": 5,
+        "coarse_max_samples": 24
+      }
     }
   },
   "performance": {
@@ -111,6 +125,7 @@
     "shorts_min_seconds": 15,
     "shorts_max_seconds": 35,
     "clip_prompt": "",
+    "strict_quality_mode": false,
     "streak_scoring": {
       "enabled": true,
       "window_seconds": 8.0,

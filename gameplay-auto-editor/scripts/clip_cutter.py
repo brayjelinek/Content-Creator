@@ -577,8 +577,8 @@ def verify_overlay_present(video_path: str | Path) -> bool:
         bottom_dark = float(np.mean(gray_bottom < 70))
         return top_dark > 0.04 or bottom_dark > 0.04
     except Exception as exc:  # noqa: BLE001
-        logger.debug("[Validation] Overlay visibility check skipped: %s", exc)
-        return True
+        logger.debug("[Validation] Overlay visibility check failed: %s", exc)
+        return False
 
 
 def _execute_vertical_render(
@@ -848,7 +848,7 @@ def _try_single_pass_highlight_render(
         **highlight,
         "video_id": video_id,
         "clip_index": clip_index,
-        "processed_clip": str(processed_path),
+        "processed_clip": str(final_path),
         "final_clip": str(final_path),
         "metadata": str(metadata_path),
         "has_audio": has_audio,
