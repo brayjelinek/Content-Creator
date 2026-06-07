@@ -21,6 +21,8 @@ concurrency:
 env:
   KEEP_RUNS: "5"
   KEEP_CACHES: "5"
+  # Each Windows build artifact is ~190MB; free tier storage is 0.5GB total.
+  KEEP_ARTIFACTS: "1"
 
 jobs:
   cleanup:
@@ -130,11 +132,42 @@ jobs:
             done
           }
 
+          prune_artifacts() {
+            local keep_count="$1"
+            local artifact_id name size_bytes created_at size_mb
+
+            mapfile -t artifact_rows < <(
+              gh api "repos/${REPO}/actions/artifacts?per_page=100" --paginate \
+                -q '.artifacts[] | [.id, .name, .size_in_bytes, .created_at] | @tsv' \
+                | sort -t $'\t' -k4,4r
+            )
+
+            if ((${#artifact_rows[@]} == 0)); then
+              echo "No artifacts present"
+              return 0
+            fi
+
+            echo "Found ${#artifact_rows[@]} artifact(s); keeping ${keep_count} newest"
+
+            if ((${#artifact_rows[@]} <= keep_count)); then
+              return 0
+            fi
+
+            for row in "${artifact_rows[@]:keep_count}"; do
+              IFS=$'\t' read -r artifact_id name size_bytes created_at <<< "${row}"
+              size_mb=$((size_bytes / 1024 / 1024))
+              echo "Deleting artifact ${artifact_id} (${name}, ${size_mb} MB, ${created_at})"
+              gh api --method DELETE "repos/${REPO}/actions/artifacts/${artifact_id}" >/dev/null || \
+                echo "Warning: could not delete artifact ${artifact_id}" >&2
+            done
+          }
+
           echo "Repository: ${REPO}"
           echo "Current run id: ${CURRENT_RUN_ID}"
 
           prune_workflow_runs "build-desktop-app.yml" "${KEEP_RUNS}"
           prune_test_workflows "${KEEP_RUNS}"
           prune_caches "${KEEP_CACHES}"
+          prune_artifacts "${KEEP_ARTIFACTS}"
 
           echo "Cleanup complete"
