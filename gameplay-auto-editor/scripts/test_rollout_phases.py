@@ -86,13 +86,24 @@ def test_custom_phase_respects_manual_optional_flags() -> None:
     assert merged["rendering"]["viral_enhancements"]["sound_effects_enabled"] is True
 
 
-def test_default_config_loads_phase_three() -> None:
+def test_default_config_loads_phase_four() -> None:
     merged = apply_rollout_defaults(_base_config())
-    assert merged["rollout"]["phase"] == "phase_3"
+    assert merged["rollout"]["phase"] == "phase_4"
     assert merged["transcription"]["enabled"] is True
     assert merged["vision"]["provider"] == "auto"
     assert merged["embedded_agent"]["enabled"] is True
     assert merged["rendering"]["viral_enhancements"]["screen_shake"] is True
+    assert merged["rollout"]["optional_features"]["parallel_render"] is True
+
+
+def test_phase_four_enables_cancel_and_prompt_filter() -> None:
+    config = _base_config()
+    config["rollout"] = {"phase": "phase_4"}
+    merged = apply_rollout_defaults(config)
+    optional = merged["rollout"]["optional_features"]
+    assert optional["pipeline_cancel"] is True
+    assert optional["prompt_filter"] is True
+    assert merged["rendering"]["single_pass_render"] is True
 
 
 def test_describe_rollout_phase() -> None:
@@ -109,7 +120,8 @@ def main() -> int:
         test_phase_two_enables_whisper_and_auto_vision,
         test_phase_three_requires_chat_path_for_chat_signals,
         test_custom_phase_respects_manual_optional_flags,
-        test_default_config_loads_phase_three,
+        test_default_config_loads_phase_four,
+        test_phase_four_enables_cancel_and_prompt_filter,
         test_describe_rollout_phase,
     ]
     for test in tests:

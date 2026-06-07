@@ -8,7 +8,7 @@ from typing import Any
 from scripts.clip_timing import INDUSTRY_TIMING_DEFAULTS
 
 DEFAULT_ROLLOUT: dict[str, Any] = {
-    "phase": "phase_3",
+    "phase": "phase_4",
     "stable_features": {
         "min_clip_duration": True,
         "adaptive_padding": True,
@@ -29,6 +29,12 @@ DEFAULT_ROLLOUT: dict[str, Any] = {
         "batch_queue": True,
         "direct_publish": False,
         "embedded_agent": False,
+        "pipeline_cancel": False,
+        "parallel_sampling": False,
+        "parallel_render": False,
+        "single_pass_render": False,
+        "streak_scoring": False,
+        "prompt_filter": False,
     },
 }
 
@@ -113,6 +119,64 @@ ROLLOUT_PHASES: dict[str, dict[str, Any]] = {
             },
             "rendering": {
                 "smart_reframe": {"enabled": True},
+                "viral_enhancements": {
+                    "styled_ass_captions_enabled": True,
+                    "ass_karaoke_enabled": True,
+                    "sound_effects_enabled": True,
+                    "screen_shake": True,
+                },
+            },
+        },
+    },
+    "phase_4": {
+        "label": "Phase 4 · Performance & control",
+        "summary": "Phase 3 plus cancel, parallel sampling/render, streak scoring, and prompt filter.",
+        "config": {
+            "rollout": {
+                "optional_features": {
+                    "smart_reframe": True,
+                    "styled_ass_captions": True,
+                    "sound_effects": True,
+                    "whisper_transcription": True,
+                    "chat_signals": True,
+                    "embedded_agent": True,
+                    "pipeline_cancel": True,
+                    "parallel_sampling": True,
+                    "parallel_render": True,
+                    "single_pass_render": True,
+                    "streak_scoring": True,
+                    "prompt_filter": True,
+                },
+            },
+            "performance": {
+                "parallel_microclip_workers": 3,
+                "parallel_render_workers": 2,
+            },
+            "vision": {
+                "provider": "auto",
+                "microclip_sampling": {
+                    "parallel_workers": 3,
+                },
+            },
+            "transcription": {
+                "enabled": True,
+                "use_for_captions": True,
+                "use_for_hooks": True,
+            },
+            "embedded_agent": {
+                "enabled": True,
+                "allow_caption_rewrite": True,
+            },
+            "highlight_detection": {
+                "clip_prompt": "",
+                "streak_scoring": {
+                    "enabled": True,
+                },
+            },
+            "rendering": {
+                "smart_reframe": {"enabled": True},
+                "parallel_render_workers": 2,
+                "single_pass_render": True,
                 "viral_enhancements": {
                     "styled_ass_captions_enabled": True,
                     "ass_karaoke_enabled": True,
@@ -321,6 +385,36 @@ def apply_rollout_defaults(config: dict[str, Any]) -> dict[str, Any]:
             agent["allow_caption_rewrite"] = False
     merged["embedded_agent"] = agent
 
+    performance = dict(merged.get("performance") or {})
+    performance.setdefault("parallel_microclip_workers", 1)
+    performance.setdefault("parallel_render_workers", 1)
+    if optional.get("parallel_sampling", False):
+        performance["parallel_microclip_workers"] = max(
+            int(performance.get("parallel_microclip_workers", 1) or 1),
+            int((merged.get("vision") or {}).get("microclip_sampling", {}).get("parallel_workers", 2) or 2),
+        )
+        microclip = dict((merged.get("vision") or {}).get("microclip_sampling") or {})
+        microclip["parallel_workers"] = performance["parallel_microclip_workers"]
+        merged.setdefault("vision", {})["microclip_sampling"] = microclip
+    if optional.get("parallel_render", False):
+        performance["parallel_render_workers"] = max(int(performance.get("parallel_render_workers", 1) or 1), 2)
+        rendering["parallel_render_workers"] = performance["parallel_render_workers"]
+    if optional.get("single_pass_render", False):
+        rendering["single_pass_render"] = True
+    else:
+        rendering.setdefault("single_pass_render", False)
+    merged["performance"] = performance
+    merged["rendering"] = rendering
+
+    highlight = dict(merged.get("highlight_detection") or {})
+    streak = dict(highlight.get("streak_scoring") or {})
+    if optional.get("streak_scoring", False):
+        streak["enabled"] = True
+    elif "enabled" not in streak:
+        streak["enabled"] = False
+    highlight["streak_scoring"] = streak
+    merged["highlight_detection"] = highlight
+
     return merged
 
 
@@ -358,5 +452,11 @@ def build_features_applied(config: dict[str, Any], report: dict[str, Any] | None
         and bool(optional.get("embedded_agent", False)),
         "screen_shake": bool(viral.get("screen_shake", False)),
         "vision_hybrid": str((config.get("vision") or {}).get("provider", "heuristic")).lower() in {"auto", "openai", "anthropic"},
+        "pipeline_cancel": bool(optional.get("pipeline_cancel", False)),
+        "parallel_sampling": bool(optional.get("parallel_sampling", False)),
+        "parallel_render": bool(optional.get("parallel_render", False)),
+        "single_pass_render": bool(rendering.get("single_pass_render", False)),
+        "streak_scoring": bool((config.get("highlight_detection") or {}).get("streak_scoring", {}).get("enabled", False)),
+        "prompt_filter": bool(optional.get("prompt_filter", False)),
     }
     return flags

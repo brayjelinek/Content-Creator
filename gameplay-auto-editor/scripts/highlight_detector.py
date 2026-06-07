@@ -7,6 +7,7 @@ from typing import Iterable, List
 
 from scripts.clip_timing import apply_timing_profile, compute_clip_range
 from scripts.ocr_utils import is_killfeed_scoring_enabled
+from scripts.streak_scoring import apply_streak_bonuses
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +49,10 @@ def detect_highlights(analyses: Iterable[dict], video_duration: float, config: d
         enriched["viral_score"] = breakdown["ai_score"]
         scored.append(enriched)
         _log_sample_scores(item, breakdown)
+
+    streak_cfg = dict(config.get("streak_scoring") or {})
+    if streak_cfg.get("enabled", False):
+        scored = apply_streak_bonuses(scored, streak_cfg)
 
     ranked = sorted(scored, key=lambda item: float(item.get("final_score", 0)), reverse=True)
     candidates = [item for item in ranked if float(item.get("final_score", 0)) >= min_final_score]

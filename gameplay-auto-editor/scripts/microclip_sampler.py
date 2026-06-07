@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from threading import Lock
 from typing import Callable, List
 
 import cv2
@@ -41,6 +43,8 @@ def extract_microclips(
     detection_profile: dict | None = None,
     progress_callback: Callable[[int, int, str], None] | None = None,
     use_stream_copy: bool = True,
+    parallel_workers: int = 1,
+    cancel_check: Callable[[], None] | None = None,
 ) -> List[dict]:
     """Sample 1–2 second microclips every N seconds for downstream analysis."""
     video_path = Path(video_path)
@@ -69,26 +73,27 @@ def extract_microclips(
         interval_seconds,
     )
 
+    workers = max(1, min(int(parallel_workers or 1), 4))
     samples: list[MicroclipSample] = []
     skipped = 0
+    progress_lock = Lock()
+    completed = 0
 
-    for index, start in enumerate(sample_starts):
-        if progress_callback and expected_count:
-            progress_callback(index + 1, expected_count, f"Sampling microclip {index + 1}/{expected_count}")
+    def _sample_one(index: int, start: float) -> MicroclipSample | None:
+        if cancel_check:
+            cancel_check()
 
         max_start = max(0.0, duration - 0.5)
         safe_start = max(0.0, min(float(start), max_start))
         if safe_start >= duration:
-            skipped += 1
-            continue
+            return None
 
         safe_duration = min(clip_duration, max(duration - safe_start, 0.5))
         clip_path = clip_dir / f"micro_{index:04d}_{safe_start:.2f}s.mp4"
 
         if not _cut_microclip(video_path, clip_path, safe_start, safe_duration, use_stream_copy=use_stream_copy):
-            skipped += 1
             logger.warning("[MicroclipSampler] Skipped microclip at %.2fs", safe_start)
-            continue
+            return None
 
         poster_path = frame_dir / f"micro_{index:04d}_{safe_start:.2f}s.jpg"
         killfeed_path = crop_dir / f"micro_{index:04d}_{safe_start:.2f}s_killfeed.jpg"
@@ -102,27 +107,62 @@ def extract_microclips(
             detection_profile,
         )
         if metrics is None:
-            skipped += 1
-            continue
+            return None
 
         signals = analyze_microclip_signals(clip_path, poster_path, detection_profile)
         audio_summary = audio_waveform_summary(clip_path)
 
-        samples.append(
-            MicroclipSample(
-                timestamp=round(safe_start + (safe_duration / 2.0), 2),
-                duration=round(safe_duration, 2),
-                clip_path=str(clip_path),
-                poster_frame_path=str(poster_path),
-                killfeed_crop_path=str(killfeed_path),
-                health_crop_path=str(health_path),
-                motion_score=round(float(signals.get("motion_intensity", metrics["motion_score"])), 2),
-                brightness=metrics["brightness"],
-                sharpness=metrics["sharpness"],
-                audio_summary=audio_summary,
-                gameplay_signals=signals,
-            )
+        return MicroclipSample(
+            timestamp=round(safe_start + (safe_duration / 2.0), 2),
+            duration=round(safe_duration, 2),
+            clip_path=str(clip_path),
+            poster_frame_path=str(poster_path),
+            killfeed_crop_path=str(killfeed_path),
+            health_crop_path=str(health_path),
+            motion_score=round(float(signals.get("motion_intensity", metrics["motion_score"])), 2),
+            brightness=metrics["brightness"],
+            sharpness=metrics["sharpness"],
+            audio_summary=audio_summary,
+            gameplay_signals=signals,
         )
+
+    def _report_progress(message: str) -> None:
+        nonlocal completed
+        if not progress_callback or not expected_count:
+            return
+        with progress_lock:
+            completed += 1
+            progress_callback(completed, expected_count, message)
+
+    if workers <= 1:
+        for index, start in enumerate(sample_starts):
+            _report_progress(f"Sampling microclip {index + 1}/{expected_count}")
+            sample = _sample_one(index, start)
+            if sample is None:
+                skipped += 1
+                continue
+            samples.append(sample)
+    else:
+        logger.info("[MicroclipSampler] Parallel sampling with %s worker(s)", workers)
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = {
+                executor.submit(_sample_one, index, start): index
+                for index, start in enumerate(sample_starts)
+            }
+            for future in as_completed(futures):
+                index = futures[future]
+                _report_progress(f"Sampling microclip {completed + 1}/{expected_count}")
+                try:
+                    sample = future.result()
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("[MicroclipSampler] Sample %s failed: %s", index, exc)
+                    sample = None
+                if sample is None:
+                    skipped += 1
+                    continue
+                samples.append(sample)
+
+    samples.sort(key=lambda item: float(item.timestamp))
 
     if skipped:
         logger.warning("[MicroclipSampler] Skipped %s microclip sample(s)", skipped)

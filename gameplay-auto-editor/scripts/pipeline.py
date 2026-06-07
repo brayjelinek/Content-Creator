@@ -27,6 +27,8 @@ from scripts.microclip_sampler import extract_microclips
 from scripts.moment_validator import enrich_highlight_validation
 from scripts.ocr_utils import initialize_ocr
 from scripts.pipeline_validation import preflight_pipeline
+from scripts.pipeline_control import PipelineCancelled, get_pipeline_control, reset_pipeline_control
+from scripts.prompt_clip_filter import filter_highlights_by_prompt
 from scripts.transcription import enrich_highlights_with_transcription
 from scripts.ui_events import (
     STAGE_DETECTING,
@@ -80,11 +82,13 @@ def run_pipeline(
     config_path: str | Path | None = None,
     config_override: dict | None = None,
     progress_callback: ProgressCallback | None = None,
+    pipeline_control=None,
 ) -> dict:
     """Run the full clip generation workflow for one input video."""
     paths = ensure_project_dirs()
     output_dir = str(paths["final"].resolve())
     clips_ready_emitted = False
+    control = pipeline_control or reset_pipeline_control()
     try:
         report = _execute_pipeline(
             video_path,
@@ -92,9 +96,23 @@ def run_pipeline(
             config_override=config_override,
             progress_callback=progress_callback,
             paths=paths,
+            pipeline_control=control,
         )
         clips_ready_emitted = True
         return report
+    except PipelineCancelled as exc:
+        logger.info("[Pipeline] %s", exc)
+        emit_ui_notice(progress_callback, "[UI] Clip creation cancelled.")
+        if not clips_ready_emitted:
+            emit_clips_ready(
+                progress_callback,
+                clip_paths=[],
+                clips=[],
+                output_dir=output_dir,
+                percent=100,
+                failure_reason="cancelled",
+            )
+        raise
     except Exception as exc:
         if not clips_ready_emitted:
             emit_clips_ready(
@@ -115,8 +133,13 @@ def _execute_pipeline(
     config_override: dict | None = None,
     progress_callback: ProgressCallback | None = None,
     paths: dict | None = None,
+    pipeline_control=None,
 ) -> dict:
     """Internal pipeline body — callers should use run_pipeline()."""
+    control = pipeline_control or get_pipeline_control()
+
+    def _check_cancel(stage: str) -> None:
+        control.check(stage)
     config = load_config(config_path)
     if config_override:
         config = _deep_merge(config, config_override)
@@ -170,7 +193,12 @@ def _execute_pipeline(
 
     vision_config = config.get("vision", {})
     microclip_config = vision_config.get("microclip_sampling", {})
+    performance_cfg = dict(config.get("performance") or {})
+    parallel_microclip_workers = int(
+        microclip_config.get("parallel_workers", performance_cfg.get("parallel_microclip_workers", 1)) or 1
+    )
 
+    _check_cancel("loading")
     samples = _extract_analysis_samples(
         input_video=input_video,
         frame_dir=frame_dir,
@@ -178,6 +206,8 @@ def _execute_pipeline(
         microclip_config=microclip_config,
         detection_profile=detection_profile,
         progress_callback=progress_callback,
+        parallel_workers=parallel_microclip_workers,
+        cancel_check=lambda: _check_cancel("microclip_sampling"),
     )
     if not samples:
         logger.error("[Pipeline] No samples extracted — check that the input is a valid video file.")
@@ -198,6 +228,7 @@ def _execute_pipeline(
     else:
         logger.info("[Pipeline] Running %s analysis on %s %s sample(s)...", provider, len(samples), sample_label)
     analyzer = VisionAnalyzer(vision_config)
+    _check_cancel("detecting")
     analyses = analyzer.analyze_samples(samples)
     _write_json(report_dir / f"{video_stem}_analysis.json", analyses)
 
@@ -221,8 +252,13 @@ def _execute_pipeline(
         percent=50,
         message="Scoring highlight moments...",
     )
+    _check_cancel("detecting")
     highlights = detect_highlights(analyses, duration, highlight_config)
     highlights = _ensure_minimum_highlights(highlights, analyses, samples, duration, highlight_config)
+    clip_prompt = str(highlight_config.get("clip_prompt") or config.get("clip_prompt") or "").strip()
+    if clip_prompt:
+        highlights = filter_highlights_by_prompt(highlights, clip_prompt)
+        emit_ui_notice(progress_callback, f"[UI] Prompt filter active: {clip_prompt}")
     logger.info("[Pipeline] Highlights detected: %s", len(highlights))
     emit_highlights_detected(progress_callback, count=len(highlights), percent=55)
 
@@ -285,6 +321,7 @@ def _execute_pipeline(
         message=f"Rendering {len(captioned_highlights)} clip(s) with FFmpeg...",
     )
     logger.info("[Pipeline] Starting clip rendering...")
+    _check_cancel("rendering")
     rendered = process_highlights(
         video_path=input_video,
         highlights=captioned_highlights,
@@ -298,6 +335,7 @@ def _execute_pipeline(
             percent=65 + int(20 * index / max(total, 1)),
             message=f"Rendering clip {index}/{total}...",
         ),
+        cancel_check=lambda: _check_cancel("rendering"),
     )
 
     used_fallback_render = False
@@ -324,6 +362,7 @@ def _execute_pipeline(
             highlights = [fallback_highlight]
 
     for clip_index, clip in enumerate(rendered, start=1):
+        _check_cancel("finalizing")
         logger.info(
             "[Pipeline] Final clip ready: %s (score %s)",
             clip["final_clip"],
@@ -437,6 +476,8 @@ def _extract_analysis_samples(
     microclip_config: dict,
     detection_profile: dict | None = None,
     progress_callback: ProgressCallback | None = None,
+    parallel_workers: int = 1,
+    cancel_check: Callable[[], None] | None = None,
 ) -> list[dict]:
     """Extract microclips by default, with safe fallback to legacy frame sampling."""
     use_microclips = bool(microclip_config.get("enabled", True))
@@ -467,6 +508,8 @@ def _extract_analysis_samples(
                 detection_profile=detection_profile,
                 progress_callback=_microclip_progress,
                 use_stream_copy=bool(microclip_config.get("use_stream_copy", True)),
+                parallel_workers=parallel_workers,
+                cancel_check=cancel_check,
             )
             if samples:
                 emit_progress(
