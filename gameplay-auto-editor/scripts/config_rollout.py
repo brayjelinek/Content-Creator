@@ -8,7 +8,7 @@ from typing import Any
 from scripts.clip_timing import INDUSTRY_TIMING_DEFAULTS
 
 DEFAULT_ROLLOUT: dict[str, Any] = {
-    "phase": "phase_1",
+    "phase": "phase_2",
     "stable_features": {
         "min_clip_duration": True,
         "adaptive_padding": True,
