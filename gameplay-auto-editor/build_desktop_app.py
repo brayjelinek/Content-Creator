@@ -75,12 +75,11 @@ def main() -> int:
     subprocess.run(command, cwd=ROOT, check=True)
 
     dist_dir = ROOT / "dist"
-    output = dist_dir / app_name
-    _write_start_here(dist_dir, build_info, app_name)
-    _write_top_level_launcher(dist_dir, app_name)
-    print(f"\nBuild complete: {output}")
-    print(f"Download or copy everything in: {dist_dir}")
-    print("Open START_HERE.txt for simple click-by-click instructions.")
+    app_build_dir = dist_dir / app_name
+    release_root = _assemble_release_package(dist_dir, app_build_dir, build_info, app_name)
+    print(f"\nBuild complete: {app_build_dir}")
+    print(f"Release package: {release_root}")
+    print("Open START_HERE.txt inside the release folder for instructions.")
     return 0
 
 
@@ -178,25 +177,61 @@ def _release_folder_name(build_info: dict[str, str]) -> str:
     return f"{APP_BASE_NAME} ({commit})"
 
 
+def _release_package_name(build_info: dict[str, str]) -> str:
+    commit = build_info.get("commit_short") or "dev"
+    return f"Gameplay-Auto-Editor-{commit}"
+
+
+def _assemble_release_package(
+    dist_dir: Path,
+    app_build_dir: Path,
+    build_info: dict[str, str],
+    app_name: str,
+) -> Path:
+    """Wrap the build in a single versioned folder for clean Windows extraction."""
+    release_name = _release_package_name(build_info)
+    release_root = dist_dir / release_name
+    if release_root.exists():
+        shutil.rmtree(release_root)
+    release_root.mkdir(parents=True)
+
+    if app_build_dir.exists():
+        shutil.move(str(app_build_dir), str(release_root / app_name))
+
+    _write_start_here(release_root, build_info, app_name)
+    _write_top_level_launcher(release_root, app_name)
+
+    for entry in dist_dir.iterdir():
+        if entry.name == release_name:
+            continue
+        if entry.is_dir():
+            shutil.rmtree(entry)
+        else:
+            entry.unlink()
+
+    return release_root
+
+
 def _write_start_here(dist_dir: Path, build_info: dict[str, str], app_name: str) -> None:
     commit = build_info.get("commit_short") or "unknown"
     if sys.platform.startswith("win"):
         instructions = [
             f"Gameplay Auto Editor - Windows ({commit})",
             "",
-            "IMPORTANT - avoid the Replace files prompt:",
+            "How to install this build:",
             "1. Right-click the downloaded zip -> Extract All...",
-            "2. Choose a NEW folder, for example Desktop\\Gameplay Auto Editor " + commit,
-            "3. Do NOT extract on top of an older copy in Downloads.",
+            "2. Choose Desktop (or any folder you like).",
+            f"3. Windows will create ONE new folder: Gameplay-Auto-Editor-{commit}",
+            "4. Open that folder and double-click OPEN_GAMEPLAY_AUTO_EDITOR.bat.",
+            "",
+            "You should NOT see Replace files prompts when extracting to Desktop.",
+            "If you do, cancel and pick a different destination folder.",
             "",
             "Extraction can take 1-2 minutes. This package is about 180 MB.",
             "",
-            "After extraction:",
-            "1. Open the new folder.",
-            "2. Double-click OPEN_GAMEPLAY_AUTO_EDITOR.bat.",
-            "",
             "Verify you have this build:",
-            f"- Folder name ends with ({commit})",
+            f"- Top folder name is Gameplay-Auto-Editor-{commit}",
+            f"- App folder inside is {app_name}",
             "- App header shows Build " + commit,
             "- Sections: Create clips, Review & export, Tools & integrations",
             "",

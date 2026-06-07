@@ -46,9 +46,11 @@ jobs:
         run: |
           commit_short=$(python -c "import json; print(json.load(open('build_info.json'))['commit_short'])")
           echo "name=Gameplay-Auto-Editor-Windows-${commit_short}" >> "$GITHUB_OUTPUT"
+          echo "folder=Gameplay-Auto-Editor-${commit_short}" >> "$GITHUB_OUTPUT"
 
       - name: Upload desktop app artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.artifact.outputs.name }}
           path: gameplay-auto-editor/dist/
+          if-no-files-found: error
