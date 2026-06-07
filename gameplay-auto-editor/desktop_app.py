@@ -64,8 +64,8 @@ class GameplayAutoEditorApp:
         self.root.minsize(1024, 700)
         self.theme = AppTheme.apply(self.root)
         self.copilot_visible = True
-        self.advanced_visible = False
-        self.integrations_visible = False
+        self.advanced_visible = True
+        self.integrations_visible = True
         self.workflow_step = 1
         self._log_rate_limiter = LogRateLimiter(interval_seconds=1.5)
         self._shimmer: ShimmerPlaceholder | None = None
@@ -241,7 +241,7 @@ class GameplayAutoEditorApp:
         settings_header.pack(fill="x", pady=(0, AppTheme.SPACING_SM))
         self.advanced_toggle_btn = create_button(
             settings_header,
-            copy.BTN_SHOW_ADVANCED,
+            copy.BTN_HIDE_ADVANCED,
             style="Ghost.TButton",
             command=self.toggle_advanced_settings,
         )
@@ -270,23 +270,26 @@ class GameplayAutoEditorApp:
             style="Caption.TLabel",
             wraplength=420,
         ).grid(row=2, column=1, sticky="w", padx=(AppTheme.SPACING_SM, 0), pady=(AppTheme.SPACING_XS, 0))
+        self._add_combobox_grid(settings_grid, 3, 0, copy.LBL_GAME, self.game_profile_var, list(copy.GAME_LABEL_TO_VALUE))
+        prompt_field = FormField(settings_grid, copy.LBL_CLIP_PROMPT)
+        prompt_field.attach(create_input(prompt_field, textvariable=self.clip_prompt_var, width=28))
+        prompt_field.grid(row=3, column=1, sticky="ew", padx=(AppTheme.SPACING_SM, 0), pady=(0, AppTheme.SPACING_SM))
 
         self.advanced_settings = ttk.Frame(settings_card.content, style="CardSurface.TFrame")
         self._add_combobox_grid(self.advanced_settings, 0, 0, copy.LBL_LOOK, self.theme_var, list(copy.THEME_LABEL_TO_VALUE))
-        self._add_combobox_grid(self.advanced_settings, 0, 1, copy.LBL_GAME, self.game_profile_var, list(copy.GAME_LABEL_TO_VALUE))
-        self._add_combobox_grid(self.advanced_settings, 1, 0, copy.LBL_FACECAM, self.smart_reframe_var, list(copy.REFRAME_LABEL_TO_VALUE))
-        self._add_spinbox_grid(self.advanced_settings, 1, 1, copy.LBL_SCAN_EVERY, self.interval_var, 1, 10)
-        self._add_spinbox_grid(self.advanced_settings, 2, 0, copy.LBL_AI_FRAMES, self.max_frames_var, 1, 40)
-        prompt_field = FormField(self.advanced_settings, copy.LBL_CLIP_PROMPT)
-        prompt_field.attach(create_input(prompt_field, textvariable=self.clip_prompt_var, width=36))
-        prompt_field.grid(row=2, column=1, sticky="ew", padx=(0, AppTheme.SPACING_SM), pady=(0, AppTheme.SPACING_SM))
+        self._add_combobox_grid(self.advanced_settings, 0, 1, copy.LBL_FACECAM, self.smart_reframe_var, list(copy.REFRAME_LABEL_TO_VALUE))
+        self._add_spinbox_grid(self.advanced_settings, 1, 0, copy.LBL_SCAN_EVERY, self.interval_var, 1, 10)
+        self._add_spinbox_grid(self.advanced_settings, 1, 1, copy.LBL_AI_FRAMES, self.max_frames_var, 1, 40)
+        self.advanced_settings.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(AppTheme.SPACING_SM, 0))
+        self.advanced_settings.columnconfigure(0, weight=1)
+        self.advanced_settings.columnconfigure(1, weight=1)
 
-        actions_card = SectionCard(workflow, padding=AppTheme.SPACING_MD, shadow="subtle")
-        actions_card.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(0, AppTheme.SPACING_MD))
-        action_row = ttk.Frame(actions_card.content, style="CardSurface.TFrame")
-        action_row.pack(fill="x")
+        create_card = SectionCard(workflow, title=copy.SECTION_CREATE, padding=AppTheme.SPACING_MD, shadow="subtle")
+        create_card.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(0, AppTheme.SPACING_SM))
+        create_row = ttk.Frame(create_card.content, style="CardSurface.TFrame")
+        create_row.pack(fill="x")
         self.generate_button = create_button(
-            action_row,
+            create_row,
             copy.BTN_CREATE_CLIPS,
             style="Primary.TButton",
             icon="✨",
@@ -294,48 +297,82 @@ class GameplayAutoEditorApp:
         )
         self.generate_button.pack(side=LEFT)
         self.cancel_button = create_button(
-            action_row,
+            create_row,
             copy.BTN_CANCEL,
             style="Ghost.TButton",
             command=self.cancel_generation,
         )
         self.cancel_button.configure(state="disabled")
         self.cancel_button.pack(side=LEFT, padx=(AppTheme.SPACING_SM, 0))
-        create_button(
-            action_row,
+        ttk.Label(
+            create_row,
+            text="Cancel stops after the current pipeline step.",
+            style="Caption.TLabel",
+        ).pack(side=LEFT, padx=(AppTheme.SPACING_MD, 0))
+
+        export_card = SectionCard(workflow, title=copy.SECTION_EXPORT, padding=AppTheme.SPACING_MD, shadow="subtle")
+        export_card.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(0, AppTheme.SPACING_SM))
+        export_row = ttk.Frame(export_card.content, style="CardSurface.TFrame")
+        export_row.pack(fill="x")
+        self.export_folder_btn = create_button(
+            export_row,
             copy.BTN_OPEN_FOLDER,
-            style="Ghost.TButton",
+            style="Secondary.TButton",
             icon="📁",
             command=lambda: open_path(PROJECT_ROOT / "final_clips"),
-        ).pack(side=LEFT, padx=(AppTheme.SPACING_SM, 0))
-        create_button(action_row, copy.BTN_SAVE_ALL, style="Ghost.TButton", command=self.export_all_clips).pack(
-            side=LEFT, padx=(AppTheme.SPACING_SM, 0)
         )
-        create_button(action_row, copy.BTN_COPY_CAPTIONS, style="Ghost.TButton", command=self.copy_all_captions).pack(
-            side=LEFT, padx=(AppTheme.SPACING_SM, 0)
+        self.export_folder_btn.pack(side=LEFT)
+        self.export_all_btn = create_button(
+            export_row,
+            copy.BTN_SAVE_ALL,
+            style="Ghost.TButton",
+            command=self.export_all_clips,
         )
+        self.export_all_btn.pack(side=LEFT, padx=(AppTheme.SPACING_SM, 0))
+        self.export_captions_btn = create_button(
+            export_row,
+            copy.BTN_COPY_CAPTIONS,
+            style="Ghost.TButton",
+            command=self.copy_all_captions,
+        )
+        self.export_captions_btn.pack(side=LEFT, padx=(AppTheme.SPACING_SM, 0))
+        ttk.Label(
+            export_row,
+            text="Use per-clip Play / Save / Copy buttons in the list below.",
+            style="Caption.TLabel",
+        ).pack(side=LEFT, padx=(AppTheme.SPACING_MD, 0))
+        self._set_export_actions_enabled(False)
+
+        tools_header = ttk.Frame(workflow, style="Surface.TFrame")
+        tools_header.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(0, AppTheme.SPACING_XS))
+        ttk.Label(tools_header, text=copy.SECTION_TOOLS, style="H6.TLabel").pack(side=LEFT)
         self.integrations_toggle_btn = create_button(
-            action_row,
-            copy.BTN_SHOW_INTEGRATIONS,
+            tools_header,
+            copy.BTN_HIDE_INTEGRATIONS,
             style="Ghost.TButton",
             command=self.toggle_integrations,
         )
         self.integrations_toggle_btn.pack(side=RIGHT)
 
         self.clips_panel = ClipsPanel(workflow, title=copy.SECTION_YOUR_CLIPS, min_height=220)
-        self.clips_panel.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(0, AppTheme.SPACING_MD))
+        self.clips_panel.grid(row=7, column=0, columnspan=2, sticky="ew", pady=(0, AppTheme.SPACING_MD))
+        ttk.Label(
+            workflow,
+            text=copy.EMPTY_STATE_HINT,
+            style="Caption.TLabel",
+            wraplength=760,
+        ).grid(row=6, column=0, columnspan=2, sticky="w", pady=(0, AppTheme.SPACING_XS))
         self.clips_panel.bind_mousewheel(self._on_clips_mousewheel)
         self.results_canvas = self.clips_panel.body
         self.results_canvas_widget = self.clips_panel.canvas
         self.results_scrollbar = self.clips_panel.scrollbar
         self._show_empty_clips_state()
 
-        self.integrations_card = SectionCard(workflow, title="Integrations", padding=AppTheme.SPACING_MD, shadow="subtle")
-        self.integrations_card.grid(row=4, column=0, columnspan=2, sticky="ew")
+        self.integrations_card = SectionCard(workflow, title=copy.SECTION_TOOLS, padding=AppTheme.SPACING_MD, shadow="subtle")
+        self.integrations_card.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(0, AppTheme.SPACING_MD))
         integrations = ttk.Notebook(self.integrations_card.content)
         integrations.pack(fill="x")
         self._build_integrations_tabs(integrations)
-        self.integrations_card.grid_remove()
 
         progress_shell = ttk.Frame(parent, style="Surface.TFrame")
         progress_shell.grid(row=1, column=0, sticky="ew", pady=(AppTheme.SPACING_SM, 0))
@@ -505,11 +542,11 @@ class GameplayAutoEditorApp:
 
     def toggle_advanced_settings(self) -> None:
         if self.advanced_visible:
-            self.advanced_settings.grid_forget()
+            self.advanced_settings.grid_remove()
             self.advanced_visible = False
             self.advanced_toggle_btn.configure(text=copy.BTN_SHOW_ADVANCED)
         else:
-            self.advanced_settings.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(AppTheme.SPACING_SM, 0))
+            self.advanced_settings.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(AppTheme.SPACING_SM, 0))
             self.advanced_settings.columnconfigure(0, weight=1)
             self.advanced_settings.columnconfigure(1, weight=1)
             self.advanced_visible = True
@@ -522,10 +559,15 @@ class GameplayAutoEditorApp:
             self.integrations_visible = False
             self.integrations_toggle_btn.configure(text=copy.BTN_SHOW_INTEGRATIONS)
         else:
-            self.integrations_card.grid()
+            self.integrations_card.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(0, AppTheme.SPACING_MD))
             self.integrations_visible = True
             self.integrations_toggle_btn.configure(text=copy.BTN_HIDE_INTEGRATIONS)
         self._finalize_card_layout()
+
+    def _set_export_actions_enabled(self, enabled: bool) -> None:
+        state = "normal" if enabled else "disabled"
+        for button in (self.export_all_btn, self.export_captions_btn):
+            button.configure(state=state)
 
     def _set_workflow_step(self, step: int) -> None:
         self.workflow_step = max(1, min(step, 3))
@@ -940,6 +982,8 @@ class GameplayAutoEditorApp:
         )
         self.report = report
         self._show_results(report)
+        clip_total = int(report.get("clips_created", 0))
+        self._set_export_actions_enabled(clip_total > 0)
         if clip_count:
             self._set_workflow_step(3)
 
@@ -975,6 +1019,7 @@ class GameplayAutoEditorApp:
                 hint = "No clips were created. Open the log file for details."
             self._append_progress(f"\n{hint}\nLog file: {log_file}\n")
         self._show_results(report)
+        self._set_export_actions_enabled(clips_created > 0)
 
     def _generation_failed(self, error_text: str) -> None:
         self.generate_button.configure(state="normal", text=copy.BTN_CREATE_CLIPS)
@@ -992,6 +1037,7 @@ class GameplayAutoEditorApp:
         }
         self.report = failure_report
         self._show_results(failure_report)
+        self._set_export_actions_enabled(False)
         messagebox.showerror(APP_TITLE, "Clip creation failed. See the activity log below for details.")
 
     def _resolve_clip_file(self, clip: dict, report: dict | None = None) -> Path | None:
@@ -1152,6 +1198,7 @@ class GameplayAutoEditorApp:
 
             buttons = ttk.Frame(card_content, style="CardSurface.TFrame")
             buttons.pack(fill="x", pady=(AppTheme.SPACING_MD, 0))
+            ttk.Label(buttons, text="Clip actions:", style="CardMuted.TLabel").pack(side=LEFT, padx=(0, AppTheme.SPACING_SM))
             create_button(buttons, copy.BTN_PLAY, style="Secondary.TButton", command=lambda p=final_clip: open_path(p)).pack(
                 side=LEFT
             )
@@ -1592,10 +1639,11 @@ class GameplayAutoEditorApp:
         EmptyState(
             self.results_canvas,
             title=copy.EMPTY_STATE_TITLE,
-            message=copy.SECTION_EMPTY_CLIPS,
+            message=f"{copy.SECTION_EMPTY_CLIPS}\n\n{copy.EMPTY_STATE_HINT}",
             icon="🎬",
         ).pack(anchor=W, fill="x", padx=AppTheme.SPACING_SM, pady=AppTheme.SPACING_SM)
         self._refresh_results_canvas()
+        self._set_export_actions_enabled(False)
 
     def _show_shimmer(self) -> None:
         self._clear_results()
