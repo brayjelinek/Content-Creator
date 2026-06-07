@@ -1,6 +1,6 @@
 {
   "rollout": {
-    "phase": "phase_2",
+    "phase": "phase_3",
     "stable_features": {
       "min_clip_duration": true,
       "adaptive_padding": true,

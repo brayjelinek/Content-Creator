@@ -1541,9 +1541,9 @@ class GameplayAutoEditorApp:
 
     def _initial_rollout_phase(self) -> str:
         try:
-            phase = str(load_config().get("rollout", {}).get("phase", "phase_2"))
+            phase = str(load_config().get("rollout", {}).get("phase", "phase_3"))
         except Exception:  # noqa: BLE001
-            phase = "phase_2"
+            phase = "phase_3"
         return copy.ROLLOUT_PHASE_VALUE_TO_LABEL.get(phase, phase)
 
     def _rollout_phase_summary(self) -> str:

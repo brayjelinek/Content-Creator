@@ -86,11 +86,13 @@ def test_custom_phase_respects_manual_optional_flags() -> None:
     assert merged["rendering"]["viral_enhancements"]["sound_effects_enabled"] is True
 
 
-def test_default_config_loads_phase_two() -> None:
+def test_default_config_loads_phase_three() -> None:
     merged = apply_rollout_defaults(_base_config())
-    assert merged["rollout"]["phase"] == "phase_2"
+    assert merged["rollout"]["phase"] == "phase_3"
     assert merged["transcription"]["enabled"] is True
     assert merged["vision"]["provider"] == "auto"
+    assert merged["embedded_agent"]["enabled"] is True
+    assert merged["rendering"]["viral_enhancements"]["screen_shake"] is True
 
 
 def test_describe_rollout_phase() -> None:
@@ -107,7 +109,7 @@ def main() -> int:
         test_phase_two_enables_whisper_and_auto_vision,
         test_phase_three_requires_chat_path_for_chat_signals,
         test_custom_phase_respects_manual_optional_flags,
-        test_default_config_loads_phase_two,
+        test_default_config_loads_phase_three,
         test_describe_rollout_phase,
     ]
     for test in tests:
