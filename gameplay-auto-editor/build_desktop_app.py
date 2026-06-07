@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -18,6 +20,7 @@ def main() -> int:
     fonts_dir = ROOT / "fonts"
     fonts_dir.mkdir(exist_ok=True)
     _prepare_bundled_font(fonts_dir)
+    build_info_path = _write_build_info()
 
     command = [
         sys.executable,
@@ -34,6 +37,8 @@ def main() -> int:
         _data_arg(ROOT / "detection_profiles", "detection_profiles"),
         "--add-data",
         _data_arg(ROOT / ".env.example", "."),
+        "--add-data",
+        _data_arg(build_info_path, "."),
     ]
 
     if (fonts_dir / "DejaVuSans-Bold.ttf").exists():
@@ -133,6 +138,40 @@ def _data_arg(source: Path, destination: str) -> str:
     return f"{source}{os.pathsep}{destination}"
 
 
+def _write_build_info() -> Path:
+    commit = os.environ.get("GITHUB_SHA")
+    branch = os.environ.get("GITHUB_REF_NAME")
+    if not commit:
+        try:
+            commit = subprocess.check_output(
+                ["git", "rev-parse", "HEAD"],
+                cwd=ROOT,
+                text=True,
+            ).strip()
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            commit = "unknown"
+    if not branch:
+        try:
+            branch = subprocess.check_output(
+                ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                cwd=ROOT,
+                text=True,
+            ).strip()
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            branch = "unknown"
+
+    payload = {
+        "commit": commit,
+        "commit_short": commit[:7],
+        "branch": branch,
+        "built_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+    }
+    build_info_path = ROOT / "build_info.json"
+    build_info_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    print(f"Build info: {payload['commit_short']} ({branch})")
+    return build_info_path
+
+
 def _write_start_here(dist_dir: Path) -> None:
     if sys.platform.startswith("win"):
         instructions = [
@@ -141,6 +180,10 @@ def _write_start_here(dist_dir: Path) -> None:
             "1. Unzip the downloaded artifact first.",
             "2. Open the folder.",
             "3. Double-click OPEN_GAMEPLAY_AUTO_EDITOR.bat.",
+            "",
+            "Verify you have the latest build:",
+            "- The app header should show a Build <commit> timestamp.",
+            "- You should see sections named Create clips, Review & export, and Tools & integrations.",
             "",
             "If that does not work, open this file instead:",
             "Gameplay Auto Editor\\Gameplay Auto Editor.exe",
