@@ -280,7 +280,7 @@ class GameplayAutoEditorApp:
         prompt_field.attach(create_input(prompt_field, textvariable=self.clip_prompt_var, width=28))
         prompt_field.grid(row=3, column=1, sticky="ew", padx=(AppTheme.SPACING_SM, 0), pady=(0, AppTheme.SPACING_SM))
 
-        self.advanced_settings = ttk.Frame(settings_card.content, style="CardSurface.TFrame")
+        self.advanced_settings = ttk.Frame(settings_grid, style="CardSurface.TFrame")
         self._add_combobox_grid(self.advanced_settings, 0, 0, copy.LBL_LOOK, self.theme_var, list(copy.THEME_LABEL_TO_VALUE))
         self._add_combobox_grid(self.advanced_settings, 0, 1, copy.LBL_FACECAM, self.smart_reframe_var, list(copy.REFRAME_LABEL_TO_VALUE))
         self._add_spinbox_grid(self.advanced_settings, 1, 0, copy.LBL_SCAN_EVERY, self.interval_var, 1, 10)
