@@ -19,6 +19,7 @@ import tkinter as tk
 from scripts.clip_metadata import quality_tier, summarize_enhancements
 from scripts.embedded_agent.advisor import EmbeddedAgentAdvisor
 from scripts.pipeline import PROJECT_ROOT, load_config, run_pipeline
+from scripts.user_config import patch_user_config
 from scripts.social_publish.manager import SocialPublishManager
 from scripts.ui_logging import LogRateLimiter, attach_ui_log_handler, detach_ui_log_handler
 from scripts.ui_theme import AppTheme
@@ -86,6 +87,8 @@ class GameplayAutoEditorApp:
         self.smart_reframe_var = StringVar(value=self._initial_smart_reframe())
         self.rollout_phase_var = StringVar(value=self._initial_rollout_phase())
         self.rollout_phase_hint_var = StringVar(value=self._rollout_phase_summary())
+        self.chat_log_path_var = StringVar(value=self._initial_chat_log_path())
+        self.chat_log_status_var = StringVar(value=self._chat_log_status_text())
         self.status_var = StringVar(value=copy.STATUS_IDLE)
         self.openai_key_var = StringVar(value="")
         self.key_status_var = StringVar(value=self._api_key_status())
@@ -390,8 +393,40 @@ class GameplayAutoEditorApp:
         )
         api_field.pack(fill="x", pady=(0, AppTheme.SPACING_SM))
         create_button(api_tab, "Save key", style="Primary.TButton", icon="💾", command=self.save_openai_key).pack(
-            anchor=W
+            anchor=W, pady=(0, AppTheme.SPACING_MD)
         )
+
+        ttk.Label(api_tab, text=copy.LBL_CHAT_LOG, style="H6.TLabel").pack(anchor=W)
+        ttk.Label(api_tab, textvariable=self.chat_log_status_var, style="Caption.TLabel", wraplength=560).pack(
+            anchor=W, pady=(AppTheme.SPACING_XS, AppTheme.SPACING_SM)
+        )
+        chat_field = ModernInput(
+            api_tab,
+            "Chat log file",
+            textvariable=self.chat_log_path_var,
+            width=42,
+        )
+        chat_field.pack(fill="x", pady=(0, AppTheme.SPACING_SM))
+        chat_actions = ttk.Frame(api_tab, style="CardSurface.TFrame")
+        chat_actions.pack(fill="x")
+        create_button(
+            chat_actions,
+            copy.BTN_BROWSE_CHAT_LOG,
+            style="Secondary.TButton",
+            command=self.choose_chat_log,
+        ).pack(side=LEFT)
+        create_button(
+            chat_actions,
+            copy.BTN_SAVE_CHAT_LOG,
+            style="Primary.TButton",
+            command=self.save_chat_log_path,
+        ).pack(side=LEFT, padx=(AppTheme.SPACING_SM, 0))
+        create_button(
+            chat_actions,
+            copy.BTN_CLEAR_CHAT_LOG,
+            style="Ghost.TButton",
+            command=self.clear_chat_log_path,
+        ).pack(side=LEFT, padx=(AppTheme.SPACING_SM, 0))
 
         ocr_tab = ttk.Frame(notebook, style="CardSurface.TFrame", padding=AppTheme.SPACING_MD)
         notebook.add(ocr_tab, text=copy.TAB_KILLFEED)
@@ -608,6 +643,7 @@ class GameplayAutoEditorApp:
             return
 
         settings = self._settings_override()
+        self._reload_runtime_services()
         self.generate_button.configure(state="disabled", text=copy.BTN_CREATING_CLIPS)
         self.batch_reports = []
         self.status_var.set(copy.STATUS_CREATING)
@@ -699,6 +735,74 @@ class GameplayAutoEditorApp:
         self.openai_key_var.set("")
         self.key_status_var.set("OpenAI key saved. Smart detection is ready.")
         self.status_var.set("API key saved.")
+        self._reload_runtime_services()
+
+    def _config_path(self) -> Path:
+        return PROJECT_ROOT / "config.json"
+
+    def _reload_runtime_services(self) -> None:
+        """Refresh config-backed services after UI or file changes."""
+        override = self._settings_override()
+        patch_user_config(
+            self._config_path(),
+            {
+                "rollout": override.get("rollout") or {},
+                "chat_signals": override.get("chat_signals") or {},
+            },
+        )
+        self.config = load_config()
+        self.social_manager = SocialPublishManager(self.config, PROJECT_ROOT)
+        self.agent_advisor = EmbeddedAgentAdvisor(
+            self.config,
+            PROJECT_ROOT,
+            approval_callback=self._agent_tool_approval,
+        )
+        self.agent_status_var.set(self._agent_status_text())
+        self.chat_log_status_var.set(self._chat_log_status_text())
+
+    def choose_chat_log(self) -> None:
+        path = filedialog.askopenfilename(
+            title="Select chat log",
+            filetypes=[
+                ("Chat logs", "*.json *.csv *.txt *.log"),
+                ("All files", "*.*"),
+            ],
+        )
+        if path:
+            self.chat_log_path_var.set(path)
+
+    def save_chat_log_path(self) -> None:
+        path = self.chat_log_path_var.get().strip()
+        if not path:
+            messagebox.showinfo(APP_TITLE, "Choose a chat log file first.")
+            return
+        if not Path(path).exists():
+            messagebox.showerror(APP_TITLE, f"File not found:\n{path}")
+            return
+        patch_user_config(
+            self._config_path(),
+            {"chat_signals": {"chat_log_path": path}},
+        )
+        self._reload_runtime_services()
+        self.status_var.set(copy.MSG_CHAT_LOG_SAVED)
+
+    def clear_chat_log_path(self) -> None:
+        self.chat_log_path_var.set("")
+        patch_user_config(
+            self._config_path(),
+            {"chat_signals": {"chat_log_path": ""}},
+        )
+        self._reload_runtime_services()
+        self.status_var.set(copy.MSG_CHAT_LOG_CLEARED)
+
+    def _chat_log_status_text(self) -> str:
+        path = self.chat_log_path_var.get().strip()
+        phase = self._rollout_phase_value()
+        if path and Path(path).exists():
+            return f"Chat spike scoring active — using {Path(path).name}"
+        if phase == "phase_3":
+            return "Phase 3 active. Optional: add a Twitch/chat export here for reaction spike scoring."
+        return "No chat log configured."
 
     def _poll_output_queue(self) -> None:
         try:
@@ -1175,11 +1279,14 @@ class GameplayAutoEditorApp:
 
     def _agent_status_text(self) -> str:
         if not self.agent_advisor.is_enabled():
-            return "Assistant disabled — enable embedded_agent in config.json to activate."
+            phase = self._rollout_phase_value()
+            if phase == "phase_3":
+                return "Phase 3 assistant loading — restart the app if this persists."
+            return "Assistant disabled — set Quality rollout to Phase 3 or enable in config.json."
         provider = self.agent_advisor.settings.provider
         has_key = bool(self.agent_advisor.settings.openai_api_key or self.agent_advisor.settings.anthropic_api_key)
-        mode = "AI-powered" if has_key else "local fallback (add OPENAI_API_KEY for full responses)"
-        return f"Assistant ready ({mode}, provider={provider})."
+        mode = "AI-powered" if has_key else "local tips (add OpenAI key in Integrations for full AI)"
+        return f"Phase 3 assistant ready ({mode}, provider={provider})."
 
     def _ui_settings_snapshot(self) -> dict[str, str]:
         return {
@@ -1225,6 +1332,8 @@ class GameplayAutoEditorApp:
         if phase == "stable":
             self.smart_reframe_var.set(copy.REFRAME_VALUE_TO_LABEL.get("off", "Off"))
             self.provider_var.set(copy.DETECTION_VALUE_TO_LABEL.get("heuristic", "Fast (no API key)"))
+        patch_user_config(self._config_path(), {"rollout": {"phase": phase}})
+        self._reload_runtime_services()
         self.agent_advisor.update_context(ui_settings=self._ui_settings_snapshot())
 
     def _agent_tool_approval(self, tool_name: str, arguments: dict) -> bool:
@@ -1466,7 +1575,8 @@ class GameplayAutoEditorApp:
             self.results_canvas_widget.yview_scroll(1, "units")
 
     def _settings_override(self) -> dict:
-        return {
+        chat_path = self.chat_log_path_var.get().strip()
+        override = {
             "rollout": {
                 "phase": self._rollout_phase_value(),
             },
@@ -1488,6 +1598,9 @@ class GameplayAutoEditorApp:
                 "game_profile": self._game_profile_value(),
             },
         }
+        if chat_path:
+            override["chat_signals"] = {"chat_log_path": chat_path}
+        return override
 
     def _ocr_status(self) -> str:
         try:
@@ -1550,6 +1663,12 @@ class GameplayAutoEditorApp:
         from scripts.config_rollout import describe_rollout_phase
 
         return describe_rollout_phase(self._rollout_phase_value())["summary"]
+
+    def _initial_chat_log_path(self) -> str:
+        try:
+            return str(load_config().get("chat_signals", {}).get("chat_log_path", "") or "")
+        except Exception:  # noqa: BLE001
+            return ""
 
     def _api_key_status(self) -> str:
         try:

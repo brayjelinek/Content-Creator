@@ -115,6 +115,12 @@ TAB_SHARE = "Share online"
 TAB_SMARTER = "Smarter detection"
 TAB_KILLFEED = "Killfeed reader"
 TAB_SHARE_HELP = "Connect YouTube, TikTok, or Instagram to post clips. Your login stays secure on this device."
+LBL_CHAT_LOG = "Chat log (optional, Phase 3)"
+BTN_BROWSE_CHAT_LOG = "Browse chat log"
+BTN_SAVE_CHAT_LOG = "Save chat path"
+BTN_CLEAR_CHAT_LOG = "Clear"
+MSG_CHAT_LOG_SAVED = "Chat log path saved. Chat spike scoring is active for the next run."
+MSG_CHAT_LOG_CLEARED = "Chat log cleared. Other Phase 3 features remain active."
 
 # Clip card actions
 BTN_PLAY = "Play"
