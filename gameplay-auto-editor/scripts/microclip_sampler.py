@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import List
+from typing import Callable, List
 
 import cv2
 import numpy as np
@@ -39,6 +39,8 @@ def extract_microclips(
     max_samples: int = 60,
     jpeg_quality: int = 85,
     detection_profile: dict | None = None,
+    progress_callback: Callable[[int, int, str], None] | None = None,
+    use_stream_copy: bool = True,
 ) -> List[dict]:
     """Sample 1–2 second microclips every N seconds for downstream analysis."""
     video_path = Path(video_path)
@@ -71,6 +73,9 @@ def extract_microclips(
     skipped = 0
 
     for index, start in enumerate(sample_starts):
+        if progress_callback and expected_count:
+            progress_callback(index + 1, expected_count, f"Sampling microclip {index + 1}/{expected_count}")
+
         max_start = max(0.0, duration - 0.5)
         safe_start = max(0.0, min(float(start), max_start))
         if safe_start >= duration:
@@ -80,7 +85,7 @@ def extract_microclips(
         safe_duration = min(clip_duration, max(duration - safe_start, 0.5))
         clip_path = clip_dir / f"micro_{index:04d}_{safe_start:.2f}s.mp4"
 
-        if not _cut_microclip(video_path, clip_path, safe_start, safe_duration):
+        if not _cut_microclip(video_path, clip_path, safe_start, safe_duration, use_stream_copy=use_stream_copy):
             skipped += 1
             logger.warning("[MicroclipSampler] Skipped microclip at %.2fs", safe_start)
             continue
@@ -153,7 +158,19 @@ def _build_sample_starts(duration: float, interval_seconds: float, max_samples: 
     return starts
 
 
-def _cut_microclip(video_path: Path, output_path: Path, start: float, duration: float) -> bool:
+def _cut_microclip(
+    video_path: Path,
+    output_path: Path,
+    start: float,
+    duration: float,
+    *,
+    use_stream_copy: bool = True,
+) -> bool:
+    if use_stream_copy:
+        copied = _cut_microclip_stream_copy(video_path, output_path, start, duration)
+        if copied:
+            return True
+
     command = [
         "ffmpeg",
         "-y",
@@ -178,6 +195,34 @@ def _cut_microclip(video_path: Path, output_path: Path, start: float, duration: 
         "28",
         "-c:a",
         "aac",
+        "-movflags",
+        "+faststart",
+        str(output_path),
+    ]
+    result = run_quiet(command)
+    return result.returncode == 0 and output_path.exists() and output_path.stat().st_size > 0
+
+
+def _cut_microclip_stream_copy(video_path: Path, output_path: Path, start: float, duration: float) -> bool:
+    """Fast analysis sample via stream copy (falls back to re-encode on failure)."""
+    command = [
+        "ffmpeg",
+        "-y",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-ss",
+        f"{start:.2f}",
+        "-i",
+        str(video_path),
+        "-t",
+        f"{duration:.2f}",
+        "-map",
+        "0:v:0",
+        "-map",
+        "0:a?",
+        "-c",
+        "copy",
         "-movflags",
         "+faststart",
         str(output_path),

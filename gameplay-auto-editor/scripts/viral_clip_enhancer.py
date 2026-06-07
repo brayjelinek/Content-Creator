@@ -19,6 +19,7 @@ from scripts.clip_cutter import (
     get_video_duration,
     probe_has_audio,
 )
+from scripts.clip_metadata import quality_tier
 from scripts.moment_validator import is_synthetic_fallback_highlight, is_validated_for_premium_effects, is_validated_for_slowmo
 from scripts.pipeline_validation import validate_filter_chain_ready, validate_font_path
 from scripts.ass_captions import build_ass_subtitle_path, escape_ass_filter_path
@@ -57,6 +58,9 @@ DEFAULT_VIRAL_CONFIG: dict[str, Any] = {
     "sound_effect_path": "",
     "styled_ass_captions_enabled": False,
     "ass_karaoke_enabled": False,
+    "fast_slowmo": True,
+    "smooth_slowmo": False,
+    "tiered_effects": True,
 }
 
 
@@ -71,7 +75,7 @@ def merge_viral_config(render_config: dict | None) -> dict[str, Any]:
 def enhance_rendered_clip(clip_path: str | Path, highlight: dict, render_config: dict | None = None) -> bool:
     """Apply viral polish in-place on an already rendered vertical clip."""
     settings = merge_render_config(render_config)
-    viral = merge_viral_config(settings)
+    viral = _apply_tiered_viral_settings(highlight, merge_viral_config(settings))
     clip_path = Path(clip_path)
 
     if not viral.get("enabled", True):
@@ -194,10 +198,52 @@ def _resolve_effect_flags(highlight: dict, viral: dict) -> tuple[bool, bool, boo
     return use_slowmo, use_premium, burn_captions, burn_hook
 
 
+def _apply_tiered_viral_settings(highlight: dict, viral: dict) -> dict:
+    """Adjust polish intensity by clip score and moment category."""
+    if not viral.get("tiered_effects", True):
+        return viral
+
+    tuned = dict(viral)
+    score = float(highlight.get("score", 0))
+    tier = str(highlight.get("quality_tier") or quality_tier(highlight))
+    categories = [str(c).lower() for c in highlight.get("categories") or []]
+
+    if tier == "fallback" or score < 40:
+        tuned["slowmo_enabled"] = False
+        tuned["zoom_enabled"] = False
+        tuned["screen_shake"] = False
+        tuned["contrast_boost"] = 1.04
+        tuned["sound_effects_enabled"] = False
+    elif tier == "low_confidence" or score < 55:
+        tuned["slowmo_enabled"] = False
+        tuned["zoom_enabled"] = True
+        tuned["zoom_factor"] = min(float(tuned.get("zoom_factor", 1.18)), 1.12)
+        tuned["screen_shake"] = False
+        tuned["fast_slowmo"] = True
+    elif score < 70:
+        tuned["fast_slowmo"] = True
+        tuned["smooth_slowmo"] = False
+        tuned["zoom_factor"] = min(float(tuned.get("zoom_factor", 1.18)), 1.15)
+    else:
+        tuned["smooth_slowmo"] = bool(tuned.get("smooth_slowmo", False))
+
+    if "clutch plays" in categories and score >= 55:
+        tuned["slowmo_enabled"] = True
+        tuned["slowmo_source_seconds"] = max(float(tuned.get("slowmo_source_seconds", 0.55)), 0.62)
+    if "fails" in categories or "deaths" in categories:
+        tuned["slowmo_enabled"] = False
+        tuned["zoom_factor"] = min(float(tuned.get("zoom_factor", 1.18)), 1.14)
+
+    return tuned
+
+
 def _impact_time_in_clip(highlight: dict, clip_duration: float) -> float:
     start = float(highlight.get("start", 0))
     timestamp = float(highlight.get("timestamp", start + clip_duration / 2))
+    signals = dict((highlight.get("raw_analysis") or {}).get("gameplay_signals") or {})
     relative = timestamp - start
+    if signals.get("audio_spike_score"):
+        relative = min(relative + 0.08, clip_duration * 0.55)
     return max(0.25, min(relative, max(clip_duration - 0.25, 0.25)))
 
 
@@ -553,11 +599,15 @@ def build_viral_filter_chain(
 
     if use_slowmo and slow_end > slow_start + 0.08:
         output_impact = slow_start + ((slow_end - slow_start) * pts_mult)
+        slow_filter = (
+            f"setpts={pts_mult:.3f}*(PTS-STARTPTS),minterpolate=fps=45:mi_mode=mci"
+            if viral.get("smooth_slowmo", False) or not viral.get("fast_slowmo", True)
+            else f"setpts={pts_mult:.3f}*(PTS-STARTPTS)"
+        )
         video_chain = (
             f"[0:v]split=3[vpre][vslow][vpost];"
             f"[vpre]trim=0:{slow_start:.3f},setpts=PTS-STARTPTS[v1];"
-            f"[vslow]trim={slow_start:.3f}:{slow_end:.3f},setpts={pts_mult:.3f}*(PTS-STARTPTS),"
-            f"minterpolate=fps=45:mi_mode=mci[v2];"
+            f"[vslow]trim={slow_start:.3f}:{slow_end:.3f},{slow_filter}[v2];"
             f"[vpost]trim={slow_end:.3f}:{clip_duration:.3f},setpts=PTS-STARTPTS[v3];"
             f"[v1][v2][v3]concat=n=3:v=1:a=0[vcat]"
         )

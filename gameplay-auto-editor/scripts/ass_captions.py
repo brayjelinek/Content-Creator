@@ -113,7 +113,8 @@ def _ass_dialogue(start: float, end: float, style: str, text: str, *, fade: bool
 
 def _build_karaoke_text(words: list[dict], clip_duration: float) -> str:
     parts: list[str] = []
-    for item in words:
+    highlight_index = _keyword_highlight_index(words)
+    for word_index, item in enumerate(words):
         word = sanitize_overlay_text(str(item.get("word") or "")).strip()
         if not word:
             continue
@@ -122,8 +123,29 @@ def _build_karaoke_text(words: list[dict], clip_duration: float) -> str:
         if start > clip_duration:
             break
         duration_cs = max(1, int((end - start) * 100))
-        parts.append(rf"{{\k{duration_cs}}}{word.upper()}")
+        upper = word.upper()
+        if word_index == highlight_index:
+            parts.append(rf"{{\k{duration_cs}}}{{\1c&H00FFFF&}}{upper}{{\r}}")
+        else:
+            parts.append(rf"{{\k{duration_cs}}}{upper}")
     return " ".join(parts)
+
+
+def _keyword_highlight_index(words: list[dict]) -> int:
+    """Highlight the most emphatic word in a karaoke line."""
+    best_index = 0
+    best_score = -1
+    for index, item in enumerate(words):
+        word = str(item.get("word") or "").strip().lower()
+        if not word:
+            continue
+        score = len(word)
+        if word in {"headshot", "clutch", "ace", "insane", "no", "way", "kill", "double"}:
+            score += 8
+        if score > best_score:
+            best_score = score
+            best_index = index
+    return best_index
 
 
 def _format_ass_time(seconds: float) -> str:

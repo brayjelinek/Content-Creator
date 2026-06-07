@@ -258,6 +258,7 @@ def _execute_pipeline(
         video_name=video_stem,
         add_hashtags=bool(render_config.get("add_hashtags", True)),
         render_config=render_config,
+        game_profile=str(detection_profile.get("id", "generic")),
     )
     try:
         from scripts.embedded_agent.caption_rewriter import maybe_rewrite_captions
@@ -266,6 +267,7 @@ def _execute_pipeline(
             captioned_highlights,
             config=config,
             video_name=video_stem,
+            game_profile=str(detection_profile.get("id", "generic")),
         )
     except Exception as exc:  # noqa: BLE001 - agent caption rewrite must never break pipeline
         logger.warning("[Pipeline] Agent caption rewrite skipped: %s", exc)
@@ -290,6 +292,12 @@ def _execute_pipeline(
         final_dir=paths["final"],
         render_config=render_config,
         video_duration=duration,
+        progress_callback=lambda index, total: emit_progress(
+            progress_callback,
+            stage=STAGE_RENDERING,
+            percent=65 + int(20 * index / max(total, 1)),
+            message=f"Rendering clip {index}/{total}...",
+        ),
     )
 
     used_fallback_render = False
@@ -315,11 +323,17 @@ def _execute_pipeline(
             logger.info("[Pipeline] Fallback clip generated")
             highlights = [fallback_highlight]
 
-    for clip in rendered:
+    for clip_index, clip in enumerate(rendered, start=1):
         logger.info(
             "[Pipeline] Final clip ready: %s (score %s)",
             clip["final_clip"],
             clip.get("score"),
+        )
+        emit_progress(
+            progress_callback,
+            stage=STAGE_RENDERING,
+            percent=85 + int(10 * clip_index / max(len(rendered), 1)),
+            message=f"Polishing clip {clip_index}/{len(rendered)}...",
         )
         try:
             enhanced = enhance_rendered_clip(clip["final_clip"], clip, render_config)
@@ -438,6 +452,11 @@ def _extract_analysis_samples(
             )
             logger.info("[Pipeline] Extracting microclips...")
             microclip_dir = frame_dir.parent / "microclips" / frame_dir.name
+
+            def _microclip_progress(current: int, total: int, message: str) -> None:
+                percent = 12 + int(16 * current / max(total, 1))
+                emit_progress(progress_callback, stage=STAGE_MICROCLIPS, percent=percent, message=message)
+
             samples = extract_microclips(
                 input_video,
                 microclip_dir,
@@ -446,6 +465,8 @@ def _extract_analysis_samples(
                 max_samples=int(microclip_config.get("max_samples", vision_config.get("max_frames_to_analyze", 60))),
                 jpeg_quality=jpeg_quality,
                 detection_profile=detection_profile,
+                progress_callback=_microclip_progress,
+                use_stream_copy=bool(microclip_config.get("use_stream_copy", True)),
             )
             if samples:
                 emit_progress(

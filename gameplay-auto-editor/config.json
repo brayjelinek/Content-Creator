@@ -31,7 +31,7 @@
     "max_turns_per_session": 50,
     "max_tool_calls_per_turn": 3,
     "max_context_clips": 5,
-    "allow_caption_rewrite": false,
+    "allow_caption_rewrite": true,
     "allow_settings_suggestions": true,
     "require_tool_approval": true
   },
@@ -78,7 +78,8 @@
       "enabled": true,
       "interval_seconds": 1.0,
       "duration_seconds": 1.5,
-      "max_samples": 60
+      "max_samples": 60,
+      "use_stream_copy": true
     }
   },
   "ocr": {
@@ -100,6 +101,10 @@
     "adaptive_padding_enabled": true,
     "adaptive_short_video_threshold": 30,
     "merge_distance_seconds": 2,
+    "shorts_length_bias_enabled": true,
+    "shorts_target_seconds": 28,
+    "shorts_min_seconds": 15,
+    "shorts_max_seconds": 35,
     "weighted_scoring": {
       "ai_weight": 0.6,
       "motion_weight": 0.1,
@@ -176,6 +181,9 @@
       "require_validation_for_effects": false,
       "min_validation_score": 45,
       "min_signal_count": 1,
+      "fast_slowmo": true,
+      "smooth_slowmo": false,
+      "tiered_effects": true,
       "sound_effects_enabled": false,
       "sound_effect_volume": 0.35,
       "sound_effect_path": "",

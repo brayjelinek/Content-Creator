@@ -48,8 +48,8 @@ LBL_EXPORT_FOR = "Made for"
 LBL_LOOK = "Caption style"
 LBL_GAME = "Game type"
 LBL_FACECAM = "Face cam split"
-LBL_SCAN_EVERY = "Scan every (sec)"
-LBL_AI_FRAMES = "Frames to check"
+LBL_SCAN_EVERY = "Sample interval (sec)"
+LBL_AI_FRAMES = "Max samples"
 LBL_ROLLOUT_PHASE = "Quality rollout"
 
 ROLLOUT_PHASE_LABEL_TO_VALUE = {

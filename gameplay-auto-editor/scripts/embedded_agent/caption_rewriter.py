@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import logging
+import re
 from typing import Any
 
 from scripts.embedded_agent.llm_client import chat_completion
@@ -16,6 +18,7 @@ def maybe_rewrite_captions(
     *,
     config: dict[str, Any],
     video_name: str = "",
+    game_profile: str = "generic",
 ) -> list[dict]:
     """
     Optionally rewrite hooks/captions with an LLM before rendering.
@@ -23,9 +26,6 @@ def maybe_rewrite_captions(
     Fail-open: returns original highlights on any error or when disabled.
     """
     settings = load_agent_settings(config)
-    rollout = dict(config.get("rollout") or {}).get("optional_features") or {}
-    if not settings.enabled or not rollout.get("embedded_agent"):
-        return highlights
     if not settings.allow_caption_rewrite:
         return highlights
     if not settings.openai_api_key and not settings.anthropic_api_key:
@@ -34,7 +34,13 @@ def maybe_rewrite_captions(
     updated: list[dict] = []
     for index, highlight in enumerate(highlights, start=1):
         try:
-            polished = _rewrite_single(highlight, settings=settings, index=index, video_name=video_name)
+            polished = _rewrite_single(
+                highlight,
+                settings=settings,
+                index=index,
+                video_name=video_name,
+                game_profile=game_profile,
+            )
             updated.append(polished)
         except Exception as exc:  # noqa: BLE001
             logger.warning("[CaptionRewrite] Skipped clip %s: %s", index, exc)
@@ -48,22 +54,41 @@ def _rewrite_single(
     settings,
     index: int,
     video_name: str,
+    game_profile: str,
 ) -> dict:
     categories = ", ".join(highlight.get("categories") or []) or "gameplay"
     score = highlight.get("score", 0)
+    signals = dict((highlight.get("raw_analysis") or {}).get("gameplay_signals") or {})
+    breakdown = highlight.get("score_breakdown") or {}
     prompt = (
-        f"Rewrite this short-form clip overlay for vertical video.\n"
-        f"Video: {video_name}\nClip: {index}\nScore: {score}\nCategories: {categories}\n"
+        "Rewrite this short-form gaming clip overlay for TikTok/YouTube Shorts.\n"
+        f"Video: {video_name}\n"
+        f"Game profile: {game_profile}\n"
+        f"Clip: {index}\n"
+        f"Score: {score}\n"
+        f"Categories: {categories}\n"
+        f"Summary: {highlight.get('summary', '')}\n"
+        f"Reason: {highlight.get('reason', '')}\n"
+        f"Transcript snippet: {highlight.get('transcript_snippet', '')}\n"
+        f"Gameplay signals: {json.dumps(signals, default=str)[:400]}\n"
+        f"Score breakdown: {json.dumps(breakdown, default=str)[:300]}\n"
         f"Current hook: {highlight.get('hook_text', '')}\n"
         f"Current caption: {highlight.get('caption_text', '')}\n\n"
-        "Return JSON with keys hook_text (max 22 chars), caption_text (max 120 chars), "
-        "social_caption (max 200 chars). Keep tone punchy for TikTok/Shorts. No hashtags in hook."
+        "Rules:\n"
+        "- hook_text: max 22 chars, scroll-stopping, specific to THIS moment (not generic)\n"
+        "- caption_text: max 120 chars, 1-2 short sentences, readable on mute\n"
+        "- social_caption: max 200 chars, no hashtags in hook\n"
+        "- Avoid: 'insane moment', 'watch this', 'blink and you miss it' unless truly unique\n"
+        "Return JSON with keys hook_text, caption_text, social_caption only."
     )
     response = chat_completion(
         provider=settings.provider,
         model=settings.model,
         messages=[
-            {"role": "system", "content": "You rewrite short-form gaming clip captions. Output valid JSON only."},
+            {
+                "role": "system",
+                "content": "You rewrite short-form gaming clip captions. Output valid JSON only.",
+            },
             {"role": "user", "content": prompt},
         ],
         openai_api_key=settings.openai_api_key,
@@ -79,7 +104,9 @@ def _rewrite_single(
         result["hook_text"] = str(parsed["hook_text"])[:22]
     if parsed.get("caption_text"):
         result["caption_text"] = str(parsed["caption_text"])[:120]
-        result["caption_lines"] = [result["caption_text"]]
+        from scripts.text_utils import wrap_overlay_text
+
+        result["caption_lines"] = wrap_overlay_text(result["caption_text"], max_chars=40, max_lines=3)
     if parsed.get("social_caption"):
         result["social_caption"] = str(parsed["social_caption"])[:200]
     result["caption_rewritten_by_agent"] = True
@@ -88,9 +115,6 @@ def _rewrite_single(
 
 
 def _parse_json_fields(content: str) -> dict[str, str]:
-    import json
-    import re
-
     content = content.strip()
     try:
         data = json.loads(content)

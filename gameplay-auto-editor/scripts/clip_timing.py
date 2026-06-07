@@ -6,6 +6,10 @@ INDUSTRY_TIMING_DEFAULTS = {
     "industry_timing_enabled": True,
     "clip_seconds_before": 0.65,
     "clip_seconds_after": 1.1,
+    "shorts_length_bias_enabled": True,
+    "shorts_target_seconds": 28,
+    "shorts_min_seconds": 15,
+    "shorts_max_seconds": 35,
     "timestamp_smoothing": {
         "merge_seconds": 2.0,
         "start_padding": 0.35,
@@ -86,7 +90,51 @@ def compute_clip_range(
             end = min(float(video_duration), end)
             start = max(0.0, end - max_clip_seconds)
 
+    if cfg.get("shorts_length_bias_enabled", True):
+        start, end = _bias_shorts_length(
+            start=start,
+            end=end,
+            timestamp=timestamp,
+            target=float(cfg.get("shorts_target_seconds", 28)),
+            min_seconds=float(cfg.get("shorts_min_seconds", 15)),
+            max_seconds=float(cfg.get("shorts_max_seconds", 35)),
+            video_duration=video_duration,
+        )
+
     return round(start, 2), round(end, 2)
+
+
+def _bias_shorts_length(
+    *,
+    start: float,
+    end: float,
+    timestamp: float,
+    target: float,
+    min_seconds: float,
+    max_seconds: float,
+    video_duration: float,
+) -> tuple[float, float]:
+    """Trim long windows toward Shorts-friendly 15–35s centered on the peak."""
+    duration = end - start
+    if duration <= max_seconds:
+        return start, end
+
+    lead = min(float(target) * 0.42, max(0.65, timestamp - start))
+    new_start = max(start, timestamp - lead)
+    new_end = min(end, new_start + target)
+    if new_end - new_start < min_seconds:
+        new_end = min(end, new_start + min_seconds)
+    if new_end - new_start > max_seconds:
+        new_start = max(start, timestamp - max_seconds * 0.45)
+        new_end = new_start + max_seconds
+
+    if video_duration > 0:
+        new_end = min(float(video_duration), new_end)
+        new_start = max(0.0, min(new_start, new_end - min_seconds))
+        if new_end - new_start > max_seconds:
+            new_start = max(0.0, new_end - max_seconds)
+
+    return new_start, new_end
 
 
 def _adapt_padding(

@@ -317,7 +317,8 @@ def apply_rollout_defaults(config: dict[str, Any]) -> dict[str, Any]:
     agent.update(dict(merged.get("embedded_agent") or {}))
     if not optional.get("embedded_agent", False):
         agent["enabled"] = False
-        agent["allow_caption_rewrite"] = False
+        if not agent.get("allow_caption_rewrite"):
+            agent["allow_caption_rewrite"] = False
     merged["embedded_agent"] = agent
 
     return merged

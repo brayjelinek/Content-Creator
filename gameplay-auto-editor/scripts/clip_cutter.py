@@ -9,7 +9,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
-from typing import Iterable, List
+from typing import Callable, Iterable, List
 
 from scripts.pipeline_validation import (
     validate_filter_chain_ready,
@@ -41,13 +41,18 @@ def process_highlights(
     final_dir: str | Path,
     render_config: dict,
     video_duration: float | None = None,
+    progress_callback: Callable[[int, int], None] | None = None,
 ) -> List[dict]:
     """Render one vertical clip per highlight, continuing when one render fails."""
     settings = merge_render_config(render_config)
     video_id = _safe_video_id(Path(video_path).stem)
     rendered: list[dict] = []
+    highlight_list = list(highlights)
+    total = len(highlight_list)
 
-    for highlight in highlights:
+    for index, highlight in enumerate(highlight_list, start=1):
+        if progress_callback:
+            progress_callback(index, total)
         try:
             clip = process_single_highlight(
                 video_path=video_path,

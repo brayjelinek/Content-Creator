@@ -671,6 +671,9 @@ class GameplayAutoEditorApp:
             with redirect_stdout(writer):
                 for index, video_path in enumerate(targets, start=1):
                     self.output_queue.put(f"\n=== Batch {index}/{len(targets)}: {video_path.name} ===\n")
+                    self.output_queue.put(
+                        ("EVENT", {"type": "progress", "stage": "batch", "percent": 0, "message": f"Batch video {index}/{len(targets)}..."})
+                    )
                     report = run_pipeline(
                         video_path,
                         config_override=settings,
