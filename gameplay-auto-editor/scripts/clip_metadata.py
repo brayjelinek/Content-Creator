@@ -46,6 +46,44 @@ def summarize_enhancements(clip: dict) -> list[str]:
     return badges
 
 
+def format_virality_subscores(clip: dict) -> str:
+    """Format weighted score breakdown for clip cards."""
+    breakdown = dict(clip.get("score_breakdown") or {})
+    if not breakdown:
+        return ""
+
+    parts: list[str] = []
+    mapping = [
+        ("ai_score", "AI"),
+        ("motion_component", "Motion"),
+        ("audio_component", "Audio"),
+        ("bonus_points", "Signals"),
+        ("streak_bonus", "Streak"),
+    ]
+    for key, label in mapping:
+        value = breakdown.get(key)
+        if value is None:
+            continue
+        try:
+            parts.append(f"{label} {float(value):.0f}")
+        except (TypeError, ValueError):
+            continue
+
+    flags = []
+    if breakdown.get("hitmarker_detected"):
+        flags.append("hitmarker")
+    if breakdown.get("killfeed_ocr_match"):
+        flags.append("killfeed")
+    if breakdown.get("low_health_detected"):
+        flags.append("low HP")
+    if breakdown.get("chat_spike_detected"):
+        flags.append("chat spike")
+    if flags:
+        parts.append("+" + ", ".join(flags))
+
+    return " · ".join(parts)
+
+
 def build_clip_report_entry(clip: dict) -> dict[str, Any]:
     """Compact per-clip metadata for run reports."""
     return {

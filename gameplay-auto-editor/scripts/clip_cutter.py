@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Callable, Iterable, List
 
@@ -42,6 +43,7 @@ def process_highlights(
     render_config: dict,
     video_duration: float | None = None,
     progress_callback: Callable[[int, int], None] | None = None,
+    cancel_check: Callable[[], None] | None = None,
 ) -> List[dict]:
     """Render one vertical clip per highlight, continuing when one render fails."""
     settings = merge_render_config(render_config)
@@ -49,27 +51,47 @@ def process_highlights(
     rendered: list[dict] = []
     highlight_list = list(highlights)
     total = len(highlight_list)
+    parallel_workers = max(1, min(int(settings.get("parallel_render_workers", 1) or 1), 4))
 
-    for index, highlight in enumerate(highlight_list, start=1):
+    def _render_one(index: int, highlight: dict) -> dict | None:
+        if cancel_check:
+            cancel_check()
         if progress_callback:
             progress_callback(index, total)
         try:
-            clip = process_single_highlight(
+            return process_single_highlight(
                 video_path=video_path,
-                highlight=highlight,
+                highlight=dict(highlight),
                 processed_dir=processed_dir,
                 final_dir=final_dir,
                 render_config=settings,
                 video_id=video_id,
                 video_duration=video_duration,
             )
-            if clip:
-                rendered.append(clip)
         except Exception as exc:  # noqa: BLE001 - continue remaining highlights
             logger.error("[FFmpeg] Highlight %s failed: %s", highlight.get("id"), exc)
             if isinstance(exc, RuntimeError) and "STDERR:" in str(exc):
                 stderr = str(exc).split("STDERR:", 1)[-1].strip()
                 logger.error("[FFmpeg] stderr: %s", stderr)
+            return None
+
+    if parallel_workers <= 1 or total <= 1:
+        for index, highlight in enumerate(highlight_list, start=1):
+            clip = _render_one(index, highlight)
+            if clip:
+                rendered.append(clip)
+    else:
+        logger.info("[FFmpeg] Parallel render with %s worker(s)", parallel_workers)
+        with ThreadPoolExecutor(max_workers=parallel_workers) as executor:
+            futures = {
+                executor.submit(_render_one, index, highlight): index
+                for index, highlight in enumerate(highlight_list, start=1)
+            }
+            for future in as_completed(futures):
+                clip = future.result()
+                if clip:
+                    rendered.append(clip)
+        rendered.sort(key=_clip_sort_key)
 
     logger.info("[FFmpeg] Rendered %s vertical clip(s) to %s", len(rendered), final_dir)
     return rendered
@@ -106,6 +128,24 @@ def process_single_highlight(
         video_duration = get_video_duration(video_path)
 
     validate_highlight_timestamps(highlight, video_duration)
+
+    if settings.get("single_pass_render"):
+        try:
+            single_pass_clip = _try_single_pass_highlight_render(
+                video_path=video_path,
+                highlight=highlight,
+                processed_path=processed_path,
+                final_path=final_path,
+                metadata_path=metadata_path,
+                render_settings=settings,
+                video_id=video_id,
+                clip_index=clip_index,
+                video_duration=video_duration,
+            )
+            if single_pass_clip:
+                return single_pass_clip
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[FFmpeg] Single-pass render failed — using standard path: %s", exc)
 
     logger.info("[FFmpeg] Cutting raw segment for %s", output_names["vertical"])
     cut_clip(video_path, processed_path, highlight["start"], highlight["duration"], settings)
@@ -537,8 +577,8 @@ def verify_overlay_present(video_path: str | Path) -> bool:
         bottom_dark = float(np.mean(gray_bottom < 70))
         return top_dark > 0.04 or bottom_dark > 0.04
     except Exception as exc:  # noqa: BLE001
-        logger.debug("[Validation] Overlay visibility check skipped: %s", exc)
-        return True
+        logger.debug("[Validation] Overlay visibility check failed: %s", exc)
+        return False
 
 
 def _execute_vertical_render(
@@ -714,6 +754,108 @@ def _clip_index(highlight: dict) -> str:
     if clip_id.startswith("highlight_"):
         return clip_id.split("_", 1)[1]
     return clip_id
+
+
+def _clip_sort_key(clip: dict) -> tuple[int, str]:
+    index = clip.get("clip_index")
+    try:
+        return (0, f"{int(index):04d}")
+    except (TypeError, ValueError):
+        return (1, str(clip.get("id", "")))
+
+
+def _try_single_pass_highlight_render(
+    *,
+    video_path: Path,
+    highlight: dict,
+    processed_path: Path,
+    final_path: Path,
+    metadata_path: Path,
+    render_settings: dict,
+    video_id: str,
+    clip_index: str,
+    video_duration: float | None,
+) -> dict | None:
+    """Cut, scale/crop, and overlay text in one FFmpeg pass when possible."""
+    settings = merge_render_config(render_settings)
+    local_font = ffmpeg_workdir(settings) / "fonts" / "overlay.ttf"
+    filter_chain = build_vertical_filter_chain(
+        hook_text=highlight.get("hook_text", "Wait for it"),
+        caption_text=highlight.get("caption_text", highlight.get("summary", "")),
+        caption_lines=highlight.get("caption_lines"),
+        settings=settings,
+    )
+    validate_font_path(str(local_font))
+    validate_filter_chain_ready(filter_chain)
+    if video_duration is not None:
+        validate_highlight_timestamps(highlight, video_duration)
+
+    logger.info("[FFmpeg] Attempting single-pass render for %s", final_path.name)
+    command = [
+        "ffmpeg",
+        "-y",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-ss",
+        f"{float(highlight['start']):.2f}",
+        "-i",
+        str(video_path),
+        "-t",
+        f"{float(highlight['duration']):.2f}",
+        "-map",
+        "0:v:0",
+        "-map",
+        "0:a?",
+        "-c:v",
+        "libx264",
+        "-preset",
+        str(settings["preset"]),
+        "-crf",
+        str(settings["video_crf"]),
+        "-c:a",
+        "aac",
+        "-shortest",
+        "-movflags",
+        "+faststart",
+        str(final_path),
+    ]
+    filter_script = _write_filter_script(filter_chain)
+    insert_at = command.index("-map")
+    command[insert_at:insert_at] = ["-filter_script:v", str(filter_script)]
+    try:
+        workdir = ffmpeg_workdir(settings)
+        _run_ffmpeg(command, stage="single_pass_render", filter_chain=filter_chain, cwd=workdir)
+        validate_output_file_exists(final_path)
+        validate_vertical_output(
+            final_path,
+            expected_width=int(settings["width"]),
+            expected_height=int(settings["height"]),
+        )
+    finally:
+        filter_script.unlink(missing_ok=True)
+
+    overlay_applied = verify_overlay_present(final_path)
+    if not overlay_applied:
+        overlay_applied = _recover_text_overlays_on_clip(final_path, highlight, settings, "single_pass_overlay_not_visible")
+
+    has_audio = probe_has_audio(final_path)
+    metadata = dict(highlight)
+    metadata["overlay_applied"] = overlay_applied
+    metadata["single_pass_render"] = True
+    metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+    return {
+        **highlight,
+        "video_id": video_id,
+        "clip_index": clip_index,
+        "processed_clip": str(final_path),
+        "final_clip": str(final_path),
+        "metadata": str(metadata_path),
+        "has_audio": has_audio,
+        "overlay_applied": overlay_applied,
+        "overlay_error": "" if overlay_applied else highlight.get("overlay_error", ""),
+        "single_pass_render": True,
+    }
 
 
 def _safe_video_id(name: str) -> str:

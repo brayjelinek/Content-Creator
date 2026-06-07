@@ -8,7 +8,7 @@ from typing import Any
 from scripts.clip_timing import INDUSTRY_TIMING_DEFAULTS
 
 DEFAULT_ROLLOUT: dict[str, Any] = {
-    "phase": "phase_3",
+    "phase": "phase_4",
     "stable_features": {
         "min_clip_duration": True,
         "adaptive_padding": True,
@@ -29,6 +29,12 @@ DEFAULT_ROLLOUT: dict[str, Any] = {
         "batch_queue": True,
         "direct_publish": False,
         "embedded_agent": False,
+        "pipeline_cancel": False,
+        "parallel_sampling": False,
+        "parallel_render": False,
+        "single_pass_render": False,
+        "streak_scoring": False,
+        "prompt_filter": False,
     },
 }
 
@@ -113,6 +119,64 @@ ROLLOUT_PHASES: dict[str, dict[str, Any]] = {
             },
             "rendering": {
                 "smart_reframe": {"enabled": True},
+                "viral_enhancements": {
+                    "styled_ass_captions_enabled": True,
+                    "ass_karaoke_enabled": True,
+                    "sound_effects_enabled": True,
+                    "screen_shake": True,
+                },
+            },
+        },
+    },
+    "phase_4": {
+        "label": "Phase 4 · Performance & control",
+        "summary": "Phase 3 plus cancel, parallel sampling/render, streak scoring, and prompt filter.",
+        "config": {
+            "rollout": {
+                "optional_features": {
+                    "smart_reframe": True,
+                    "styled_ass_captions": True,
+                    "sound_effects": True,
+                    "whisper_transcription": True,
+                    "chat_signals": True,
+                    "embedded_agent": True,
+                    "pipeline_cancel": True,
+                    "parallel_sampling": True,
+                    "parallel_render": True,
+                    "single_pass_render": True,
+                    "streak_scoring": True,
+                    "prompt_filter": True,
+                },
+            },
+            "performance": {
+                "parallel_microclip_workers": 3,
+                "parallel_render_workers": 2,
+            },
+            "vision": {
+                "provider": "auto",
+                "microclip_sampling": {
+                    "parallel_workers": 3,
+                },
+            },
+            "transcription": {
+                "enabled": True,
+                "use_for_captions": True,
+                "use_for_hooks": True,
+            },
+            "embedded_agent": {
+                "enabled": True,
+                "allow_caption_rewrite": True,
+            },
+            "highlight_detection": {
+                "clip_prompt": "",
+                "streak_scoring": {
+                    "enabled": True,
+                },
+            },
+            "rendering": {
+                "smart_reframe": {"enabled": True},
+                "parallel_render_workers": 2,
+                "single_pass_render": True,
                 "viral_enhancements": {
                     "styled_ass_captions_enabled": True,
                     "ass_karaoke_enabled": True,
@@ -212,13 +276,17 @@ def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any
 
 
 def _apply_phase_preset(config: dict[str, Any], phase: str) -> dict[str, Any]:
-    """Layer phased defaults on top of user config so presets can enable optional features."""
+    """Layer phased defaults on top of user config; explicit optional_features overrides win."""
     if phase == "custom":
         return deepcopy(config)
 
+    user_optional = dict((config.get("rollout") or {}).get("optional_features") or {})
     preset = dict(ROLLOUT_PHASES[phase].get("config") or {})
+    preset_optional = dict((preset.get("rollout") or {}).get("optional_features") or {})
     merged = _deep_merge(deepcopy(config), preset)
-    merged.setdefault("rollout", {})["phase"] = phase
+    merged.setdefault("rollout", {})
+    merged["rollout"]["optional_features"] = {**preset_optional, **user_optional}
+    merged["rollout"]["phase"] = phase
     return merged
 
 
@@ -248,12 +316,16 @@ def apply_rollout_defaults(config: dict[str, Any]) -> dict[str, Any]:
     transcription.update(dict(merged.get("transcription") or {}))
     merged["transcription"] = transcription
 
-    highlight = dict(merged.get("highlight_detection") or {})
+    from scripts.highlight_scoring import resolve_min_final_score, sync_weighted_threshold
+
+    highlight = sync_weighted_threshold(dict(merged.get("highlight_detection") or {}))
     weights = dict(highlight.get("weighted_scoring") or {})
     weights.setdefault("audio_spike_bonus", 10)
     weights.setdefault("audio_spike_threshold", 12)
     weights.setdefault("chat_spike_bonus", chat["score_bonus"])
+    weights["min_final_score"] = resolve_min_final_score(highlight, weights)
     highlight["weighted_scoring"] = weights
+    highlight["min_score"] = weights["min_final_score"]
     stable = dict(rollout.get("stable_features") or {})
     if stable.get("industry_timing", True):
         timing = dict(INDUSTRY_TIMING_DEFAULTS)
@@ -274,22 +346,22 @@ def apply_rollout_defaults(config: dict[str, Any]) -> dict[str, Any]:
     if rollout["stable_features"].get("burn_captions_on_overlay_fail", True):
         viral.setdefault("burn_captions_when_overlay_missing", True)
 
-    if optional.get("smart_reframe", False):
-        smart["enabled"] = True
-    else:
+    if not optional.get("smart_reframe", False):
         smart["enabled"] = False
+    else:
+        smart["enabled"] = bool(smart.get("enabled", True))
 
     if optional.get("sound_effects", False):
         viral["sound_effects_enabled"] = True
     else:
-        viral["sound_effects_enabled"] = False
+        viral["sound_effects_enabled"] = bool(viral.get("sound_effects_enabled", False))
 
     if optional.get("styled_ass_captions", False):
         viral["styled_ass_captions_enabled"] = True
-        viral["ass_karaoke_enabled"] = True
+        viral["ass_karaoke_enabled"] = bool(viral.get("ass_karaoke_enabled", True))
     else:
-        viral["styled_ass_captions_enabled"] = False
-        viral["ass_karaoke_enabled"] = False
+        viral["styled_ass_captions_enabled"] = bool(viral.get("styled_ass_captions_enabled", False))
+        viral["ass_karaoke_enabled"] = bool(viral.get("ass_karaoke_enabled", False))
 
     rendering["viral_enhancements"] = viral
     rendering["smart_reframe"] = smart
@@ -301,11 +373,20 @@ def apply_rollout_defaults(config: dict[str, Any]) -> dict[str, Any]:
         chat["enabled"] = False
     merged["chat_signals"] = chat
 
-    if optional.get("whisper_transcription", False):
-        transcription["enabled"] = True
-    else:
+    if not optional.get("whisper_transcription", False):
         transcription["enabled"] = False
+    elif "enabled" in transcription:
+        transcription["enabled"] = bool(transcription["enabled"])
+    else:
+        transcription["enabled"] = True
     merged["transcription"] = transcription
+
+    if transcription.get("enabled") and optional.get("styled_ass_captions", False):
+        if "styled_ass_captions_enabled" not in viral:
+            viral["styled_ass_captions_enabled"] = True
+            viral["ass_karaoke_enabled"] = True
+        rendering["viral_enhancements"] = viral
+        merged["rendering"] = rendering
 
     social = dict(DEFAULT_SOCIAL_PUBLISH)
     social.update(dict(merged.get("social_publish") or {}))
@@ -320,6 +401,36 @@ def apply_rollout_defaults(config: dict[str, Any]) -> dict[str, Any]:
         if not agent.get("allow_caption_rewrite"):
             agent["allow_caption_rewrite"] = False
     merged["embedded_agent"] = agent
+
+    performance = dict(merged.get("performance") or {})
+    performance.setdefault("parallel_microclip_workers", 1)
+    performance.setdefault("parallel_render_workers", 1)
+    if optional.get("parallel_sampling", False):
+        performance["parallel_microclip_workers"] = max(
+            int(performance.get("parallel_microclip_workers", 1) or 1),
+            int((merged.get("vision") or {}).get("microclip_sampling", {}).get("parallel_workers", 2) or 2),
+        )
+        microclip = dict((merged.get("vision") or {}).get("microclip_sampling") or {})
+        microclip["parallel_workers"] = performance["parallel_microclip_workers"]
+        merged.setdefault("vision", {})["microclip_sampling"] = microclip
+    if optional.get("parallel_render", False):
+        performance["parallel_render_workers"] = max(int(performance.get("parallel_render_workers", 1) or 1), 2)
+        rendering["parallel_render_workers"] = performance["parallel_render_workers"]
+    if optional.get("single_pass_render", False):
+        rendering["single_pass_render"] = True
+    else:
+        rendering.setdefault("single_pass_render", False)
+    merged["performance"] = performance
+    merged["rendering"] = rendering
+
+    highlight = dict(merged.get("highlight_detection") or {})
+    streak = dict(highlight.get("streak_scoring") or {})
+    if optional.get("streak_scoring", False):
+        streak["enabled"] = True
+    elif "enabled" not in streak:
+        streak["enabled"] = False
+    highlight["streak_scoring"] = streak
+    merged["highlight_detection"] = highlight
 
     return merged
 
@@ -358,5 +469,11 @@ def build_features_applied(config: dict[str, Any], report: dict[str, Any] | None
         and bool(optional.get("embedded_agent", False)),
         "screen_shake": bool(viral.get("screen_shake", False)),
         "vision_hybrid": str((config.get("vision") or {}).get("provider", "heuristic")).lower() in {"auto", "openai", "anthropic"},
+        "pipeline_cancel": bool(optional.get("pipeline_cancel", False)),
+        "parallel_sampling": bool(optional.get("parallel_sampling", False)),
+        "parallel_render": bool(optional.get("parallel_render", False)),
+        "single_pass_render": bool(rendering.get("single_pass_render", False)),
+        "streak_scoring": bool((config.get("highlight_detection") or {}).get("streak_scoring", {}).get("enabled", False)),
+        "prompt_filter": bool(optional.get("prompt_filter", False)),
     }
     return flags

@@ -1,0 +1,26 @@
+name: Tests
+
+on:
+  push:
+    branches: [main, 'cursor/**']
+  pull_request:
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: gameplay-auto-editor
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Run unit tests
+        run: |
+          python3 scripts/test_quality_trust.py
+          python3 scripts/test_phase4_features.py
+          python3 scripts/test_rollout_phases.py
+          python3 scripts/test_caption_quality.py

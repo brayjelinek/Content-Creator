@@ -16,9 +16,10 @@ from tkinter import DoubleVar, StringVar, Text, Tk
 from tkinter import ttk
 import tkinter as tk
 
-from scripts.clip_metadata import quality_tier, summarize_enhancements
+from scripts.clip_metadata import format_virality_subscores, quality_tier, summarize_enhancements
 from scripts.embedded_agent.advisor import EmbeddedAgentAdvisor
 from scripts.pipeline import PROJECT_ROOT, load_config, run_pipeline
+from scripts.pipeline_control import PipelineCancelled, get_pipeline_control, reset_pipeline_control
 from scripts.user_config import patch_user_config
 from scripts.social_publish.manager import SocialPublishManager
 from scripts.ui_logging import LogRateLimiter, attach_ui_log_handler, detach_ui_log_handler
@@ -77,16 +78,17 @@ class GameplayAutoEditorApp:
         self.stage_var = StringVar(value=copy.STATUS_IDLE)
 
         self.provider_var = StringVar(value=self._initial_provider())
-        self.max_clips_var = StringVar(value="5")
-        self.min_score_var = StringVar(value="25")
-        self.interval_var = StringVar(value="3")
-        self.max_frames_var = StringVar(value="10")
+        self.max_clips_var = StringVar(value=self._initial_max_clips())
+        self.min_score_var = StringVar(value=self._initial_min_score())
+        self.interval_var = StringVar(value=self._initial_scan_interval())
+        self.max_frames_var = StringVar(value=self._initial_max_frames())
         self.platform_var = StringVar(value=self._initial_platform_preset())
         self.theme_var = StringVar(value=self._initial_theme())
         self.game_profile_var = StringVar(value=self._initial_game_profile())
         self.smart_reframe_var = StringVar(value=self._initial_smart_reframe())
         self.rollout_phase_var = StringVar(value=self._initial_rollout_phase())
         self.rollout_phase_hint_var = StringVar(value=self._rollout_phase_summary())
+        self.clip_prompt_var = StringVar(value=self._initial_clip_prompt())
         self.chat_log_path_var = StringVar(value=self._initial_chat_log_path())
         self.chat_log_status_var = StringVar(value=self._chat_log_status_text())
         self.status_var = StringVar(value=copy.STATUS_IDLE)
@@ -275,6 +277,9 @@ class GameplayAutoEditorApp:
         self._add_combobox_grid(self.advanced_settings, 1, 0, copy.LBL_FACECAM, self.smart_reframe_var, list(copy.REFRAME_LABEL_TO_VALUE))
         self._add_spinbox_grid(self.advanced_settings, 1, 1, copy.LBL_SCAN_EVERY, self.interval_var, 1, 10)
         self._add_spinbox_grid(self.advanced_settings, 2, 0, copy.LBL_AI_FRAMES, self.max_frames_var, 1, 40)
+        prompt_field = FormField(self.advanced_settings, copy.LBL_CLIP_PROMPT)
+        prompt_field.attach(create_input(prompt_field, textvariable=self.clip_prompt_var, width=36))
+        prompt_field.grid(row=2, column=1, sticky="ew", padx=(0, AppTheme.SPACING_SM), pady=(0, AppTheme.SPACING_SM))
 
         actions_card = SectionCard(workflow, padding=AppTheme.SPACING_MD, shadow="subtle")
         actions_card.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(0, AppTheme.SPACING_MD))
@@ -288,6 +293,14 @@ class GameplayAutoEditorApp:
             command=self.generate_clips,
         )
         self.generate_button.pack(side=LEFT)
+        self.cancel_button = create_button(
+            action_row,
+            copy.BTN_CANCEL,
+            style="Ghost.TButton",
+            command=self.cancel_generation,
+        )
+        self.cancel_button.configure(state="disabled")
+        self.cancel_button.pack(side=LEFT, padx=(AppTheme.SPACING_SM, 0))
         create_button(
             action_row,
             copy.BTN_OPEN_FOLDER,
@@ -644,7 +657,9 @@ class GameplayAutoEditorApp:
 
         settings = self._settings_override()
         self._reload_runtime_services()
+        reset_pipeline_control()
         self.generate_button.configure(state="disabled", text=copy.BTN_CREATING_CLIPS)
+        self.cancel_button.configure(state="normal", text=copy.BTN_CANCEL)
         self.batch_reports = []
         self.status_var.set(copy.STATUS_CREATING)
         self._set_workflow_step(2)
@@ -657,9 +672,16 @@ class GameplayAutoEditorApp:
         thread = threading.Thread(target=self._run_batch_worker, args=(targets, settings), daemon=True)
         thread.start()
 
+    def cancel_generation(self) -> None:
+        get_pipeline_control().cancel()
+        self.cancel_button.configure(state="disabled", text=copy.BTN_CANCELLING)
+        self.status_var.set("Stopping after the current step…")
+        self.stage_var.set("Cancellation requested")
+
     def _run_batch_worker(self, targets: list[Path], settings: dict) -> None:
         writer = QueueWriter(self.output_queue)
         ui_session = attach_ui_log_handler(self.output_queue)
+        control = get_pipeline_control()
 
         def progress_callback(event: dict) -> None:
             self.output_queue.put(("EVENT", event))
@@ -668,9 +690,13 @@ class GameplayAutoEditorApp:
         accumulated_clips: list[dict] = []
         accumulated_ready: list[str] = []
         batch_errors: list[dict] = []
+        cancelled = False
         try:
             with redirect_stdout(writer):
                 for index, video_path in enumerate(targets, start=1):
+                    if control.is_cancelled:
+                        cancelled = True
+                        break
                     self.output_queue.put(f"\n=== Batch {index}/{len(targets)}: {video_path.name} ===\n")
                     self.output_queue.put(
                         ("EVENT", {"type": "progress", "stage": "batch", "percent": 0, "message": f"Batch video {index}/{len(targets)}..."})
@@ -680,7 +706,12 @@ class GameplayAutoEditorApp:
                             video_path,
                             config_override=settings,
                             progress_callback=progress_callback,
+                            pipeline_control=control,
                         )
+                    except PipelineCancelled:
+                        cancelled = True
+                        self.output_queue.put(f"[Batch] Cancelled during {video_path.name}\n")
+                        break
                     except Exception as exc:  # noqa: BLE001
                         batch_errors.append({"video": str(video_path), "error": str(exc)})
                         self.output_queue.put(f"[Batch] Failed on {video_path.name}: {exc}\n")
@@ -707,6 +738,15 @@ class GameplayAutoEditorApp:
             if combined_report is not None and batch_errors:
                 combined_report["batch_errors"] = batch_errors
                 combined_report["batch_failed_count"] = len(batch_errors)
+            if cancelled:
+                if combined_report is None and accumulated_clips:
+                    combined_report = {
+                        "clips": accumulated_clips,
+                        "clips_ready": accumulated_ready,
+                        "clips_created": len(accumulated_clips),
+                    }
+                if combined_report is not None:
+                    combined_report["failure_reason"] = "cancelled"
             self.output_queue.put(("DONE", combined_report or {}))
             if self.video_queue:
                 self.video_queue.clear()
@@ -908,6 +948,7 @@ class GameplayAutoEditorApp:
         self.agent_advisor.update_context(report=report, ui_settings=self._ui_settings_snapshot())
         self.agent_status_var.set(self._agent_status_text())
         self.generate_button.configure(state="normal", text=copy.BTN_CREATE_CLIPS)
+        self.cancel_button.configure(state="disabled", text=copy.BTN_CANCEL)
         clips_created = int(report.get("clips_created", 0))
         batch_count = int(report.get("batch_count", 0))
         if self._progress_animator:
@@ -915,7 +956,10 @@ class GameplayAutoEditorApp:
         else:
             self.progress_var.set(100.0)
         self._hide_shimmer()
-        if batch_count > 1:
+        if report.get("failure_reason") == "cancelled":
+            self.stage_var.set("Cancelled")
+            self.status_var.set("Clip creation cancelled.")
+        elif batch_count > 1:
             self.stage_var.set(f"All done — {clips_created} clip(s) from {batch_count} video(s).")
             self.status_var.set(copy.STATUS_DONE)
         else:
@@ -934,6 +978,7 @@ class GameplayAutoEditorApp:
 
     def _generation_failed(self, error_text: str) -> None:
         self.generate_button.configure(state="normal", text=copy.BTN_CREATE_CLIPS)
+        self.cancel_button.configure(state="disabled", text=copy.BTN_CANCEL)
         self.status_var.set(copy.STATUS_FAILED)
         self.stage_var.set(copy.STATUS_FAILED)
         self._hide_shimmer()
@@ -1057,6 +1102,15 @@ class GameplayAutoEditorApp:
                 ttk.Label(
                     card_content,
                     text=" · ".join(badges),
+                    style="CardMuted.TLabel",
+                    wraplength=520,
+                ).pack(anchor=W, pady=(0, AppTheme.SPACING_XS))
+
+            subscores = format_virality_subscores(clip)
+            if subscores:
+                ttk.Label(
+                    card_content,
+                    text=f"Virality: {subscores}",
                     style="CardMuted.TLabel",
                     wraplength=520,
                 ).pack(anchor=W, pady=(0, AppTheme.SPACING_XS))
@@ -1616,6 +1670,10 @@ class GameplayAutoEditorApp:
                 "max_clips": int(self.max_clips_var.get()),
                 "min_score": int(self.min_score_var.get()),
                 "game_profile": self._game_profile_value(),
+                "clip_prompt": self.clip_prompt_var.get().strip(),
+                "weighted_scoring": {
+                    "min_final_score": int(self.min_score_var.get()),
+                },
             },
         }
         if chat_path:
@@ -1672,12 +1730,47 @@ class GameplayAutoEditorApp:
             value = "off"
         return copy.REFRAME_VALUE_TO_LABEL.get(value, value)
 
+    def _initial_min_score(self) -> str:
+        try:
+            highlight = load_config().get("highlight_detection", {})
+            value = highlight.get("min_score", highlight.get("weighted_scoring", {}).get("min_final_score", 60))
+            return str(int(value))
+        except Exception:  # noqa: BLE001
+            return "60"
+
+    def _initial_max_clips(self) -> str:
+        try:
+            return str(int(load_config().get("highlight_detection", {}).get("max_clips", 5)))
+        except Exception:  # noqa: BLE001
+            return "5"
+
+    def _initial_scan_interval(self) -> str:
+        try:
+            return str(int(load_config().get("vision", {}).get("analysis_interval_seconds", 3)))
+        except Exception:  # noqa: BLE001
+            return "3"
+
+    def _initial_max_frames(self) -> str:
+        try:
+            vision = load_config().get("vision", {})
+            micro = vision.get("microclip_sampling", {})
+            value = micro.get("max_samples", vision.get("max_frames_to_analyze", 60))
+            return str(int(value))
+        except Exception:  # noqa: BLE001
+            return "60"
+
     def _initial_rollout_phase(self) -> str:
         try:
-            phase = str(load_config().get("rollout", {}).get("phase", "phase_3"))
+            phase = str(load_config().get("rollout", {}).get("phase", "phase_4"))
         except Exception:  # noqa: BLE001
-            phase = "phase_3"
+            phase = "phase_4"
         return copy.ROLLOUT_PHASE_VALUE_TO_LABEL.get(phase, phase)
+
+    def _initial_clip_prompt(self) -> str:
+        try:
+            return str(load_config().get("highlight_detection", {}).get("clip_prompt", "") or "")
+        except Exception:  # noqa: BLE001
+            return ""
 
     def _rollout_phase_summary(self) -> str:
         from scripts.config_rollout import describe_rollout_phase

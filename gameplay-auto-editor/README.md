@@ -219,13 +219,35 @@ Outputs:
 
 ## How the pipeline works
 
-1. `frame_extractor.py` samples frames with OpenCV and calculates motion, brightness, and sharpness signals.
-2. `vision_analyzer.py` sends frames to OpenAI/Anthropic when configured, or uses the local heuristic fallback.
-3. `highlight_detector.py` scores and merges nearby high-value moments into clip ranges.
-4. `caption_generator.py` creates short hook text and captions.
-5. `clip_cutter.py` uses FFmpeg to cut segments, crop/scale to 1080x1920, and overlay text.
-6. `pipeline.py` ties all steps together.
-7. `dashboard.py` provides the upload, preview, and download UI.
+1. **Microclip sampling** (`microclip_sampler.py`) extracts short gameplay segments (with optional adaptive resampling around motion/audio peaks), analyzes motion, audio spikes, hitmarkers, killfeed OCR, and low-health HUD signals.
+2. **Vision analysis** (`vision_analyzer.py`) scores samples with OpenAI/Anthropic when configured, hybrid `auto` mode, or a local heuristic fallback.
+3. **Highlight detection** (`highlight_detector.py`) applies weighted scoring, streak bonuses, prompt filtering (after transcription), and industry timing to pick clip ranges.
+4. **Transcription** (`transcription.py`, optional) uses Whisper CLI or OpenAI Whisper for speech-aligned captions and ASS karaoke.
+5. **Captions** (`caption_generator.py`) builds signal-driven hooks, impact text, and wrapped overlay captions (optional LLM rewrite).
+6. **Render pass 1** (`clip_cutter.py`) cuts segments, optionally smart-reframes facecam layouts, and renders vertical 1080×1920 clips with hook/caption overlays.
+7. **Render pass 2** (`viral_clip_enhancer.py`) applies tiered slow-mo, zoom, polish, impact SFX, and styled ASS captions when enabled.
+
+Rollout phases (`config.json` → `rollout.phase`) enable features progressively from stable defaults through Phase 4 performance controls. Set `"phase": "custom"` for manual control via `optional_features`.
+
+### Optional quality tools
+
+| Tool | Purpose | Install |
+|------|---------|---------|
+| FFmpeg / ffprobe | Required — cut, render, enhance | System package |
+| Tesseract | Killfeed OCR bonuses | https://github.com/UB-Mannheim/tesseract/wiki |
+| Whisper CLI | Speech-aligned captions | `pip install openai-whisper` |
+| OpenAI / Anthropic key | Smart vision + caption rewrite | `.env` or desktop UI |
+
+The desktop app **Highlight bar** maps to `highlight_detection.min_score` / `weighted_scoring.min_final_score`. Lower it for more clips; raise it for stricter selection. Enable `strict_quality_mode` in config to skip synthetic fallback clips.
+
+### Tests
+
+```bash
+python3 scripts/test_quality_trust.py
+python3 scripts/test_phase4_features.py
+python3 scripts/test_rollout_phases.py
+python3 scripts/test_caption_quality.py
+```
 
 ## Notes
 

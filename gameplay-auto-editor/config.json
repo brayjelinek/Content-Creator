@@ -1,6 +1,6 @@
 {
   "rollout": {
-    "phase": "phase_3",
+    "phase": "phase_4",
     "stable_features": {
       "min_clip_duration": true,
       "adaptive_padding": true,
@@ -13,14 +13,20 @@
       "industry_timing": true
     },
     "optional_features": {
-      "smart_reframe": false,
-      "sound_effects": false,
-      "chat_signals": false,
-      "styled_ass_captions": false,
-      "whisper_transcription": false,
+      "smart_reframe": true,
+      "sound_effects": true,
+      "chat_signals": true,
+      "styled_ass_captions": true,
+      "whisper_transcription": true,
       "batch_queue": true,
       "direct_publish": false,
-      "embedded_agent": false
+      "embedded_agent": true,
+      "pipeline_cancel": true,
+      "parallel_sampling": true,
+      "parallel_render": true,
+      "single_pass_render": true,
+      "streak_scoring": true,
+      "prompt_filter": true
     }
   },
   "embedded_agent": {
@@ -79,8 +85,21 @@
       "interval_seconds": 1.0,
       "duration_seconds": 1.5,
       "max_samples": 60,
-      "use_stream_copy": true
+      "use_stream_copy": true,
+      "parallel_workers": 3,
+      "adaptive_sampling": {
+        "enabled": true,
+        "coarse_interval_seconds": 2.0,
+        "dense_interval_seconds": 0.5,
+        "peak_window_seconds": 3.0,
+        "peak_count": 5,
+        "coarse_max_samples": 24
+      }
     }
+  },
+  "performance": {
+    "parallel_microclip_workers": 3,
+    "parallel_render_workers": 2
   },
   "ocr": {
     "enabled": true,
@@ -105,6 +124,15 @@
     "shorts_target_seconds": 28,
     "shorts_min_seconds": 15,
     "shorts_max_seconds": 35,
+    "clip_prompt": "",
+    "strict_quality_mode": false,
+    "streak_scoring": {
+      "enabled": true,
+      "window_seconds": 8.0,
+      "bonus_per_kill": 12,
+      "multi_kill_bonus": 20,
+      "max_bonus": 45
+    },
     "weighted_scoring": {
       "ai_weight": 0.6,
       "motion_weight": 0.1,
@@ -130,6 +158,8 @@
     "height": 1920,
     "video_crf": 23,
     "preset": "veryfast",
+    "parallel_render_workers": 2,
+    "single_pass_render": true,
     "top_safe_zone": 250,
     "bottom_safe_zone": 300,
     "side_safe_zone": 120,
