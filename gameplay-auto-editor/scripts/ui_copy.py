@@ -29,16 +29,23 @@ BTN_COPY_CAPTIONS = "Copy all captions"
 
 # Sections
 SECTION_CLIP_SETTINGS = "Clip settings"
+SECTION_CREATE = "Create clips"
+SECTION_EXPORT = "Review & export"
+SECTION_TOOLS = "Tools & integrations"
 SECTION_CREATING = "Creating your clips"
 SECTION_YOUR_CLIPS = "Your clips"
 SECTION_EMPTY_CLIPS = "Your finished clips will show up here after you create them."
 EMPTY_STATE_TITLE = "No clips yet"
+EMPTY_STATE_HINT = (
+    "After you create clips, each card below will include Play, Save copy, Copy caption, "
+    "Copy post text, and optional Post to YouTube/TikTok/Reels buttons."
+)
 LOADING_CLIPS = "Finding your best moments and building share-ready clips…"
 SECTION_ADVANCED = "Advanced options"
 BTN_SHOW_ADVANCED = "Show advanced options"
 BTN_HIDE_ADVANCED = "Hide advanced options"
-BTN_SHOW_INTEGRATIONS = "Show integrations"
-BTN_HIDE_INTEGRATIONS = "Hide integrations"
+BTN_SHOW_INTEGRATIONS = "Show tools & connect"
+BTN_HIDE_INTEGRATIONS = "Hide tools & connect"
 
 # Settings labels (plain language)
 LBL_DETECTION = "Highlight finder"
