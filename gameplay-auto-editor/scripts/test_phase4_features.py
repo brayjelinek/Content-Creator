@@ -103,6 +103,15 @@ def test_format_virality_subscores() -> None:
     assert "hitmarker" in text
 
 
+def test_ass_captions_skipped_when_overlay_applied() -> None:
+    from scripts.viral_clip_enhancer import _should_apply_ass_captions
+
+    viral = {"styled_ass_captions_enabled": True}
+    assert _should_apply_ass_captions({"overlay_applied": True}, viral) is False
+    assert _should_apply_ass_captions({"overlay_applied": False}, viral) is True
+    assert _should_apply_ass_captions({"overlay_applied": True}, {"styled_ass_captions_enabled": False}) is False
+
+
 def main() -> int:
     tests = [
         test_pipeline_cancel_raises,
@@ -111,6 +120,7 @@ def main() -> int:
         test_prompt_filter_matches_keyword,
         test_phase_four_enables_performance_flags,
         test_format_virality_subscores,
+        test_ass_captions_skipped_when_overlay_applied,
     ]
     for test in tests:
         test()

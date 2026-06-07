@@ -12,17 +12,17 @@ from dataclasses import dataclass
 class SpaceScale:
     xs: int = 4
     sm: int = 8
-    md: int = 12
-    lg: int = 16
-    xl: int = 24
-    xxl: int = 32
+    md: int = 16
+    lg: int = 20
+    xl: int = 28
+    xxl: int = 36
 
 
 @dataclass(frozen=True)
 class RadiusScale:
-    sm: int = 6
-    md: int = 10
-    lg: int = 14
+    sm: int = 8
+    md: int = 12
+    lg: int = 16
 
 
 @dataclass(frozen=True)
@@ -34,12 +34,12 @@ class ShadowScale:
 
 @dataclass(frozen=True)
 class ColorTokens:
-    background: str = "#0c0d10"
-    surface: str = "#14161b"
-    surface_elevated: str = "#1c1f26"
-    surface_hover: str = "#262a33"
-    primary: str = "#6366f1"
-    primary_hover: str = "#818cf8"
+    background: str = "#09090b"
+    surface: str = "#111114"
+    surface_elevated: str = "#18181b"
+    surface_hover: str = "#232329"
+    primary: str = "#7c83ff"
+    primary_hover: str = "#9aa0ff"
     primary_soft: str = "#2a2d4a"
     secondary: str = "#334155"
     secondary_hover: str = "#475569"
@@ -49,8 +49,8 @@ class ColorTokens:
     text_secondary: str = "#cbd5e1"
     text_muted: str = "#94a3b8"
     text_dim: str = "#64748b"
-    border: str = "#2a3140"
-    input: str = "#111318"
+    border: str = "#27272a"
+    input: str = "#0f1014"
     success: str = "#22c55e"
     warning: str = "#eab308"
     danger: str = "#ef4444"
@@ -104,15 +104,15 @@ class DesignSystem:
             family=family,
             mono=mono,
             h1=(family, 28, "bold"),
-            h2=(family, 22, "bold"),
-            h3=(family, 17, "bold"),
-            h4=(family, 15, "bold"),
-            h5=(family, 13, "bold"),
+            h2=(family, 24, "bold"),
+            h3=(family, 16, "bold"),
+            h4=(family, 14, "bold"),
+            h5=(family, 12, "bold"),
             h6=(family, 11, "bold"),
-            body=(family, 10),
-            body_bold=(family, 10, "bold"),
-            caption=(family, 9),
-            button=(family, 10, "bold"),
+            body=(family, 11),
+            body_bold=(family, 11, "bold"),
+            caption=(family, 10),
+            button=(family, 11, "bold"),
         )
 
 

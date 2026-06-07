@@ -50,7 +50,7 @@ class ScrollablePanel(tk.Frame):
             self,
             highlightthickness=0,
             bd=0,
-            bg=DS.color.surface,
+            bg=DS.color.background,
         )
         self.scrollbar = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
         self.body = ttk.Frame(self.canvas, style="Surface.TFrame", padding=(0, 0, DS.space.xs, 0))
@@ -107,7 +107,7 @@ class ScrollablePanel(tk.Frame):
 
 
 class SectionCard(tk.Frame):
-    """Card container with optional title, padding, and simulated shadow."""
+    """Card container with optional title, padding, and border styling."""
 
     def __init__(
         self,
@@ -117,25 +117,27 @@ class SectionCard(tk.Frame):
         subtitle: str = "",
         padding: int | None = None,
         radius: int | None = None,
-        shadow: str = "medium",
+        shadow: str = "border",
         min_height: int | None = None,
     ):
         self.tokens = DS
         self._padding = padding or self.tokens.space.lg
-        self._radius = radius or self.tokens.radius.md
+        self._radius = radius or self.tokens.radius.lg
         self._fill = self.tokens.color.surface_elevated
+        self._border = self.tokens.color.border
         shadow_map = {
             "subtle": self.tokens.shadow.subtle,
             "medium": self.tokens.shadow.medium,
             "strong": self.tokens.shadow.strong,
         }
-        self._shadow_color = shadow_map.get(shadow, self.tokens.shadow.medium)
+        self._shadow_color = shadow_map.get(shadow, self.tokens.shadow.subtle)
+        self._shadow_mode = shadow
         self._min_height = min_height or 0
 
         super().__init__(master, bg=self.tokens.color.background)
 
         outer = tk.Frame(self, bg=self.tokens.color.background)
-        outer.pack(fill=BOTH, expand=True, padx=self.tokens.space.xs, pady=self.tokens.space.sm)
+        outer.pack(fill=BOTH, expand=True, padx=0, pady=(0, self.tokens.space.sm))
 
         self.canvas = tk.Canvas(
             outer,
@@ -149,7 +151,7 @@ class SectionCard(tk.Frame):
         self._window = self.canvas.create_window(self._padding, self._padding, window=self.content, anchor="nw")
 
         if title:
-            ttk.Label(self.content, text=title, style="H3.TLabel").pack(anchor=W)
+            ttk.Label(self.content, text=title, style="H5.TLabel").pack(anchor=W)
         if subtitle:
             ttk.Label(self.content, text=subtitle, style="Caption.TLabel").pack(
                 anchor=W, pady=(self.tokens.space.xs, self.tokens.space.sm)
@@ -177,8 +179,21 @@ class SectionCard(tk.Frame):
         width = max(self.canvas.winfo_width(), 10)
         height = max(self.canvas.winfo_height(), 10)
         self.canvas.delete("card")
-        self._round_rect(3, 5, width - 1, height - 1, self._radius + 2, fill=self._shadow_color, tags="card")
-        self._round_rect(0, 0, width - 4, height - 6, self._radius, fill=self._fill, tags="card")
+        if self._shadow_mode == "border":
+            self._round_rect(
+                0,
+                0,
+                width - 1,
+                height - 1,
+                self._radius,
+                fill=self._fill,
+                outline=self._border,
+                width=1,
+                tags="card",
+            )
+        else:
+            self._round_rect(3, 5, width - 1, height - 1, self._radius + 2, fill=self._shadow_color, tags="card")
+            self._round_rect(0, 0, width - 4, height - 6, self._radius, fill=self._fill, tags="card")
         self.canvas.tag_lower("card")
         inner_width = max(width - (self._padding * 2) - 4, 80)
         self.canvas.itemconfigure(self._window, width=inner_width)
@@ -398,15 +413,23 @@ class SmoothProgressAnimator:
 
 class StepStrip(tk.Frame):
     def __init__(self, master: tk.Misc, steps: list[str]):
-        super().__init__(master, bg=DS.color.surface_elevated)
+        super().__init__(master, bg=DS.color.surface)
         self.labels: list[ttk.Label] = []
+        self._accents: list[tk.Frame] = []
         for index, label in enumerate(steps):
+            step_frame = ttk.Frame(self, style="Surface.TFrame")
+            step_frame.pack(side=LEFT, expand=True, fill=X, padx=(0, DS.space.sm if index < len(steps) - 1 else 0))
             style = "StepActive.TLabel" if index == 0 else "Step.TLabel"
-            item = ttk.Label(self, text=label, style=style)
-            item.pack(side=LEFT, padx=(0, DS.space.lg))
+            item = ttk.Label(step_frame, text=label, style=style)
+            item.pack(anchor=W)
+            accent = tk.Frame(step_frame, bg=DS.color.primary if index == 0 else DS.color.border, height=2)
+            accent.pack(fill=X, pady=(DS.space.xs, 0))
             self.labels.append(item)
+            self._accents.append(accent)
 
     def set_active(self, step: int) -> None:
         for index, label in enumerate(self.labels):
-            style = "StepActive.TLabel" if index + 1 == step else "Step.TLabel"
-            label.configure(style=style)
+            active = index + 1 == step
+            label.configure(style="StepActive.TLabel" if active else "Step.TLabel")
+            if index < len(self._accents):
+                self._accents[index].configure(bg=DS.color.primary if active else DS.color.border)

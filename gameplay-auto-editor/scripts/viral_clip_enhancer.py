@@ -93,12 +93,13 @@ def enhance_rendered_clip(clip_path: str | Path, highlight: dict, render_config:
         logger.info("[Enhancer] Clip too short for polish (%.2fs)", duration)
         return False
 
+    if not highlight.get("overlay_applied", True):
+        if _recover_missing_text_overlays(clip_path, highlight, settings):
+            highlight["overlay_applied"] = True
+
     use_slowmo, use_premium, burn_captions, burn_hook = _resolve_effect_flags(highlight, viral)
     impact_t = _impact_time_in_clip(highlight, duration)
     temp_output = clip_path.with_suffix(".viral.tmp.mp4")
-
-    if not highlight.get("overlay_applied", True):
-        _recover_missing_text_overlays(clip_path, highlight, settings)
 
     try:
         filter_summary = _render_enhanced_clip(
@@ -126,7 +127,9 @@ def enhance_rendered_clip(clip_path: str | Path, highlight: dict, render_config:
             use_premium or burn_captions or highlight.get("text_overlay_recovered")
         )
         highlight["moment_validated"] = use_premium
-        if apply_styled_ass_captions(clip_path, highlight, settings, viral):
+        if _should_apply_ass_captions(highlight, viral) and apply_styled_ass_captions(
+            clip_path, highlight, settings, viral
+        ):
             highlight["viral_ass_captions_applied"] = True
         logger.info("[Enhancer] Filters applied: %s", filter_summary)
         logger.info("[Enhancer] Using enhanced clip path: %s", resolved_path)
@@ -161,6 +164,7 @@ def _recover_missing_text_overlays(clip_path: Path, highlight: dict, settings: d
         highlight["viral_captions_burned"] = True
         highlight["viral_hook_burned"] = True
         highlight["text_overlay_recovered"] = True
+        highlight["overlay_applied"] = True
         logger.info("[Enhancer] Text overlays recovered on %s", clip_path.name)
         return True
     except Exception as exc:  # noqa: BLE001
@@ -759,6 +763,16 @@ def _resolve_sound_effect_path(viral: dict, settings: dict) -> Path | None:
         if candidate.exists() and candidate.stat().st_size > 0:
             return candidate.resolve()
     return None
+
+
+def _should_apply_ass_captions(highlight: dict, viral: dict) -> bool:
+    """Styled ASS repeats hook/caption text already burned in pass 1."""
+    if not viral.get("styled_ass_captions_enabled", False):
+        return False
+    if highlight.get("overlay_applied"):
+        logger.info("[Enhancer] Skipping ASS captions — pass 1 text overlays already applied")
+        return False
+    return True
 
 
 def apply_styled_ass_captions(
