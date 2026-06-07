@@ -137,7 +137,7 @@ class GameplayAutoEditorApp:
             self.workflow_scroll.refresh()
 
     def _build_ui(self) -> None:
-        shell = ttk.Frame(self.root, padding=(AppTheme.SPACING_LG, AppTheme.SPACING_MD))
+        shell = ttk.Frame(self.root, padding=(AppTheme.SPACING_XL, AppTheme.SPACING_LG))
         shell.pack(fill=BOTH, expand=True)
         shell.columnconfigure(0, weight=1)
         shell.rowconfigure(1, weight=1)
@@ -197,29 +197,28 @@ class GameplayAutoEditorApp:
         workflow.columnconfigure(0, weight=1)
         workflow.columnconfigure(1, weight=1)
 
-        steps_card = SectionCard(workflow, padding=AppTheme.SPACING_MD, shadow="subtle")
-        steps_card.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, AppTheme.SPACING_MD))
-        self.step_strip = StepStrip(steps_card.content, [copy.STEP_PICK, copy.STEP_CREATE, copy.STEP_REVIEW])
+        steps_shell = ttk.Frame(workflow, style="Surface.TFrame", padding=(0, 0, 0, AppTheme.SPACING_MD))
+        steps_shell.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, AppTheme.SPACING_LG))
+        self.step_strip = StepStrip(steps_shell, [copy.STEP_PICK, copy.STEP_CREATE, copy.STEP_REVIEW])
         self.step_strip.pack(fill="x")
         self.step_labels = self.step_strip.labels
 
         hero_card = SectionCard(
             workflow,
-            title=copy.HERO_HEADLINE,
+            title=copy.SECTION_SOURCE,
             padding=AppTheme.SPACING_LG,
         )
-        hero_card.grid(row=1, column=0, sticky="nsew", padx=(0, AppTheme.SPACING_SM), pady=(0, AppTheme.SPACING_MD))
+        hero_card.grid(row=1, column=0, sticky="nsew", padx=(0, AppTheme.SPACING_SM), pady=(0, AppTheme.SPACING_LG))
 
         file_row = ttk.Frame(hero_card.content, style="CardSurface.TFrame")
         file_row.pack(fill="x")
-        create_button(file_row, copy.BTN_SELECT_VIDEO, style="Secondary.TButton", icon="▶", command=self.choose_video).pack(
+        create_button(file_row, copy.BTN_SELECT_VIDEO, style="Secondary.TButton", command=self.choose_video).pack(
             side=LEFT
         )
         create_button(
             file_row,
             copy.BTN_ADD_QUEUE,
             style="Ghost.TButton",
-            icon="+",
             command=self.add_to_queue,
         ).pack(side=LEFT, padx=(AppTheme.SPACING_SM, 0))
         create_button(
@@ -240,7 +239,7 @@ class GameplayAutoEditorApp:
         self.queue_listbox.pack(fill="x", pady=(AppTheme.SPACING_XS, 0))
 
         settings_card = SectionCard(workflow, title=copy.SECTION_CLIP_SETTINGS, padding=AppTheme.SPACING_LG)
-        settings_card.grid(row=1, column=1, sticky="nsew", padx=(AppTheme.SPACING_SM, 0), pady=(0, AppTheme.SPACING_MD))
+        settings_card.grid(row=1, column=1, sticky="nsew", padx=(AppTheme.SPACING_SM, 0), pady=(0, AppTheme.SPACING_LG))
 
         settings_header = ttk.Frame(settings_card.content, style="CardSurface.TFrame")
         settings_header.pack(fill="x", pady=(0, AppTheme.SPACING_SM))
@@ -289,15 +288,15 @@ class GameplayAutoEditorApp:
         self.advanced_settings.columnconfigure(0, weight=1)
         self.advanced_settings.columnconfigure(1, weight=1)
 
-        create_card = SectionCard(workflow, title=copy.SECTION_CREATE, padding=AppTheme.SPACING_MD, shadow="subtle")
-        create_card.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(0, AppTheme.SPACING_SM))
-        create_row = ttk.Frame(create_card.content, style="CardSurface.TFrame")
+        actions_card = SectionCard(workflow, title=copy.SECTION_ACTIONS, padding=AppTheme.SPACING_LG)
+        actions_card.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(0, AppTheme.SPACING_LG))
+
+        create_row = ttk.Frame(actions_card.content, style="CardSurface.TFrame")
         create_row.pack(fill="x")
         self.generate_button = create_button(
             create_row,
             copy.BTN_CREATE_CLIPS,
             style="Primary.TButton",
-            icon="✨",
             command=self.generate_clips,
         )
         self.generate_button.pack(side=LEFT)
@@ -315,15 +314,12 @@ class GameplayAutoEditorApp:
             style="Caption.TLabel",
         ).pack(side=LEFT, padx=(AppTheme.SPACING_MD, 0))
 
-        export_card = SectionCard(workflow, title=copy.SECTION_EXPORT, padding=AppTheme.SPACING_MD, shadow="subtle")
-        export_card.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(0, AppTheme.SPACING_SM))
-        export_row = ttk.Frame(export_card.content, style="CardSurface.TFrame")
-        export_row.pack(fill="x")
+        export_row = ttk.Frame(actions_card.content, style="CardSurface.TFrame")
+        export_row.pack(fill="x", pady=(AppTheme.SPACING_MD, 0))
         self.export_folder_btn = create_button(
             export_row,
             copy.BTN_OPEN_FOLDER,
             style="Secondary.TButton",
-            icon="📁",
             command=lambda: open_path(PROJECT_ROOT / "final_clips"),
         )
         self.export_folder_btn.pack(side=LEFT)
@@ -343,45 +339,43 @@ class GameplayAutoEditorApp:
         self.export_captions_btn.pack(side=LEFT, padx=(AppTheme.SPACING_SM, 0))
         ttk.Label(
             export_row,
-            text="Use per-clip Play / Save / Copy buttons in the list below.",
+            text="Export actions unlock after clips finish rendering.",
             style="Caption.TLabel",
-        ).pack(side=LEFT, padx=(AppTheme.SPACING_MD, 0))
+        ).pack(anchor=W, pady=(AppTheme.SPACING_XS, 0))
         self._set_export_actions_enabled(False)
 
-        tools_header = ttk.Frame(workflow, style="Surface.TFrame")
-        tools_header.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(0, AppTheme.SPACING_XS))
-        ttk.Label(tools_header, text=copy.SECTION_TOOLS, style="H6.TLabel").pack(side=LEFT)
+        self.integrations_card = SectionCard(workflow, title=copy.SECTION_TOOLS, padding=AppTheme.SPACING_LG)
+        self.integrations_card.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(0, AppTheme.SPACING_LG))
+        integrations_header = ttk.Frame(self.integrations_card.content, style="CardSurface.TFrame")
+        integrations_header.pack(fill="x", pady=(0, AppTheme.SPACING_SM))
         self.integrations_toggle_btn = create_button(
-            tools_header,
+            integrations_header,
             copy.BTN_HIDE_INTEGRATIONS,
             style="Ghost.TButton",
             command=self.toggle_integrations,
         )
         self.integrations_toggle_btn.pack(side=RIGHT)
+        integrations = ttk.Notebook(self.integrations_card.content)
+        integrations.pack(fill="x")
+        self._build_integrations_tabs(integrations)
 
-        self.clips_panel = ClipsPanel(workflow, title=copy.SECTION_YOUR_CLIPS, min_height=220)
-        self.clips_panel.grid(row=7, column=0, columnspan=2, sticky="ew", pady=(0, AppTheme.SPACING_MD))
         ttk.Label(
             workflow,
             text=copy.EMPTY_STATE_HINT,
             style="Caption.TLabel",
             wraplength=760,
-        ).grid(row=6, column=0, columnspan=2, sticky="w", pady=(0, AppTheme.SPACING_XS))
+        ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(0, AppTheme.SPACING_XS))
+        self.clips_panel = ClipsPanel(workflow, title=copy.SECTION_YOUR_CLIPS, min_height=240)
+        self.clips_panel.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(0, AppTheme.SPACING_MD))
         self.clips_panel.bind_mousewheel(self._on_clips_mousewheel)
         self.results_canvas = self.clips_panel.body
         self.results_canvas_widget = self.clips_panel.canvas
         self.results_scrollbar = self.clips_panel.scrollbar
         self._show_empty_clips_state()
 
-        self.integrations_card = SectionCard(workflow, title=copy.SECTION_TOOLS, padding=AppTheme.SPACING_MD, shadow="subtle")
-        self.integrations_card.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(0, AppTheme.SPACING_MD))
-        integrations = ttk.Notebook(self.integrations_card.content)
-        integrations.pack(fill="x")
-        self._build_integrations_tabs(integrations)
-
         progress_shell = ttk.Frame(parent, style="Surface.TFrame")
         progress_shell.grid(row=1, column=0, sticky="ew", pady=(AppTheme.SPACING_SM, 0))
-        progress_card = SectionCard(progress_shell, title=copy.SECTION_CREATING, padding=AppTheme.SPACING_MD, shadow="medium")
+        progress_card = SectionCard(progress_shell, title=copy.SECTION_CREATING, padding=AppTheme.SPACING_LG)
         progress_card.pack(fill="x")
         self.progress_bar = ttk.Progressbar(progress_card.content, variable=self.progress_var, maximum=100, mode="determinate")
         self.progress_bar.pack(fill="x", pady=(0, AppTheme.SPACING_SM))
@@ -407,7 +401,7 @@ class GameplayAutoEditorApp:
             ("tiktok", "TikTok"),
             ("instagram", "Instagram Reels"),
         ):
-            row = SectionCard(social_tab, padding=AppTheme.SPACING_MD, shadow="subtle")
+            row = SectionCard(social_tab, padding=AppTheme.SPACING_MD)
             row.pack(fill="x", pady=(0, AppTheme.SPACING_SM))
             header = ttk.Frame(row.content, style="CardSurface.TFrame")
             header.pack(fill="x")
@@ -424,7 +418,6 @@ class GameplayAutoEditorApp:
                 actions,
                 "Connect",
                 style="Primary.TButton",
-                icon="🔗",
                 command=lambda p=platform: self.connect_platform(p),
             ).pack(side=LEFT)
             create_button(
@@ -564,7 +557,7 @@ class GameplayAutoEditorApp:
             self.integrations_visible = False
             self.integrations_toggle_btn.configure(text=copy.BTN_SHOW_INTEGRATIONS)
         else:
-            self.integrations_card.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(0, AppTheme.SPACING_MD))
+            self.integrations_card.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(0, AppTheme.SPACING_LG))
             self.integrations_visible = True
             self.integrations_toggle_btn.configure(text=copy.BTN_HIDE_INTEGRATIONS)
         self._finalize_card_layout()

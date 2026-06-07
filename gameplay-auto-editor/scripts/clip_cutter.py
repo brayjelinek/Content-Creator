@@ -176,10 +176,9 @@ def process_single_highlight(
         overlay_applied = True
         if not verify_overlay_present(final_path):
             logger.warning(
-                "[FFmpeg] Overlay render succeeded but no text detected in %s — retrying text burn",
+                "[FFmpeg] Overlay verify inconclusive for %s — keeping pass-1 text burn",
                 final_path.name,
             )
-            overlay_applied = _recover_text_overlays_on_clip(final_path, highlight, render_settings, "overlay_not_visible")
     except Exception as exc:
         overlay_error = str(exc)
         logger.error("[FFmpeg] Overlay render failed for %s: %s", highlight.get("id"), exc)
@@ -835,9 +834,12 @@ def _try_single_pass_highlight_render(
     finally:
         filter_script.unlink(missing_ok=True)
 
-    overlay_applied = verify_overlay_present(final_path)
-    if not overlay_applied:
-        overlay_applied = _recover_text_overlays_on_clip(final_path, highlight, settings, "single_pass_overlay_not_visible")
+    overlay_applied = True
+    if not verify_overlay_present(final_path):
+        logger.warning(
+            "[FFmpeg] Single-pass overlay verify inconclusive for %s — keeping pass-1 text burn",
+            final_path.name,
+        )
 
     has_audio = probe_has_audio(final_path)
     metadata = dict(highlight)

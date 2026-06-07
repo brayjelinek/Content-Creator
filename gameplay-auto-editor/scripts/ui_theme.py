@@ -55,7 +55,7 @@ class AppTheme:
         cls.FONT_HERO = fonts.h3
         cls.FONT_SUBTITLE = fonts.body
         cls.FONT_SMALL = fonts.caption
-        cls.FONT_MONO = (fonts.mono, 9)
+        cls.FONT_MONO = (fonts.mono, 10)
         cls.FONT_CHIP = fonts.caption
         cls.FONT_STEP = fonts.h6
         cls.SPACING_XS = DS.space.xs
@@ -111,8 +111,8 @@ class AppTheme:
         style.configure("Surface.TLabel", background=SURFACE, foreground=TEXT, font=fonts.body)
         style.configure("Hero.TLabel", background=SURFACE_ELEVATED, foreground=TEXT, font=fonts.h3)
         style.configure("HeroMuted.TLabel", background=SURFACE_ELEVATED, foreground=TEXT_MUTED, font=fonts.body)
-        style.configure("Step.TLabel", background=BG, foreground=TEXT_DIM, font=fonts.h6)
-        style.configure("StepActive.TLabel", background=BG, foreground=ACCENT_GLOW, font=fonts.h6)
+        style.configure("Step.TLabel", background=SURFACE, foreground=TEXT_DIM, font=fonts.caption)
+        style.configure("StepActive.TLabel", background=SURFACE, foreground=TEXT, font=fonts.body_bold)
         style.configure("Copilot.TLabel", background=SURFACE_ELEVATED, foreground=TEXT, font=fonts.body_bold)
         style.configure("CopilotMuted.TLabel", background=SURFACE_ELEVATED, foreground=TEXT_MUTED, font=fonts.caption)
         style.configure("Title.TLabel", background=BG, foreground=TEXT, font=fonts.h2)
@@ -255,8 +255,8 @@ class AppTheme:
         style.configure("TNotebook", background=BG, borderwidth=0, tabmargins=(0, 0, 0, 0))
         style.configure(
             "TNotebook.Tab",
-            background=SURFACE,
-            foreground=TEXT_MUTED,
+            background=BG,
+            foreground=TEXT_DIM,
             padding=(DS.space.lg, DS.space.sm),
             font=fonts.caption,
         )
