@@ -33,3 +33,22 @@ Use the GitHub Actions Windows artifact only if:
 - you are testing a release build
 
 For day-to-day improvements, the source-folder + updater workflow is faster.
+
+## GitHub Actions (free account friendly)
+
+To save Actions minutes and artifact storage:
+
+- **Tests** run on pull requests to `main` only (not every branch push).
+- **Windows packaged builds** are **manual only**: GitHub → Actions → **Build desktop app** → **Run workflow**.
+
+Run tests locally before opening a PR:
+
+```bat
+cd gameplay-auto-editor
+python scripts\test_quality_trust.py
+python scripts\test_phase4_features.py
+python scripts\test_rollout_phases.py
+python scripts\test_caption_quality.py
+```
+
+Only trigger a Windows build when you need a fresh `.exe` zip to share or test packaging.

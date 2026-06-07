@@ -38,19 +38,20 @@ Copy that folder to the target computer and open the app inside it.
 
 ## GitHub Actions builds
 
-This repository includes:
+The workflow lives at:
 
 ```text
 .github/workflows/build-desktop-app.yml
 ```
 
-The workflow builds artifacts for:
+It builds a **Windows** packaged app. To avoid using Actions minutes on every code push, the workflow is **manual only**:
 
-- Windows
-- macOS
-- Linux
+1. Open the repo on GitHub
+2. Go to **Actions** → **Build desktop app**
+3. Click **Run workflow** → choose branch `main` → **Run workflow**
+4. When it finishes, download the artifact (kept for 7 days)
 
-After the workflow runs, download the artifact for your operating system from the GitHub Actions run.
+Use this when you need a shareable zip without installing Python locally. For daily development, prefer `Launch Gameplay Auto Editor.bat` after `git pull` instead.
 
 ## FFmpeg
 

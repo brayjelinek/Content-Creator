@@ -1,14 +1,19 @@
+# Windows desktop builds are expensive on free GitHub Actions (Windows minutes
+# cost more than Linux). This workflow runs ONLY when you click "Run workflow"
+# in the Actions tab — not on every push or merge.
 name: Build desktop app
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
-      - "cursor/**"
-    paths:
-      - "gameplay-auto-editor/**"
-      - ".github/workflows/build-desktop-app.yml"
+    inputs:
+      note:
+        description: Optional note for this build (shows in the run summary)
+        required: false
+        default: manual build
+
+concurrency:
+  group: desktop-build
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -54,3 +59,4 @@ jobs:
           name: ${{ steps.artifact.outputs.name }}
           path: gameplay-auto-editor/dist/
           if-no-files-found: error
+          retention-days: 7

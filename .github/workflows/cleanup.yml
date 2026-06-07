@@ -1,0 +1,140 @@
+# Automatically prune old Actions runs, artifacts, logs, and caches so free-tier
+# storage stays under the 0.5 GB limit. Deleting a run removes its logs and artifacts.
+name: Cleanup Actions storage
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+  workflow_run:
+    workflows: ["Build desktop app"]
+    types: [completed]
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: actions-storage-cleanup
+  cancel-in-progress: false
+
+env:
+  KEEP_RUNS: "5"
+  KEEP_CACHES: "5"
+
+jobs:
+  cleanup:
+    name: Prune old runs and caches
+    runs-on: ubuntu-latest
+    if: >-
+      github.repository != '' &&
+      (github.event_name != 'pull_request' ||
+       github.event.pull_request.head.repo.full_name == github.repository)
+    steps:
+      - name: Prune workflow runs and caches
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          CURRENT_RUN_ID: ${{ github.run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          prune_workflow_runs() {
+            local workflow_path="$1"
+            local keep_count="$2"
+            local workflow_id run_ids_to_delete run_id status created_at
+
+            workflow_id="$(gh api "repos/${REPO}/actions/workflows/${workflow_path}" -q .id 2>/dev/null || true)"
+            if [[ -z "${workflow_id}" ]]; then
+              echo "Workflow not found, skipping: ${workflow_path}"
+              return 0
+            fi
+
+            echo "Pruning ${workflow_path} (workflow id ${workflow_id}), keeping ${keep_count} newest runs"
+
+            mapfile -t run_rows < <(
+              gh api "repos/${REPO}/actions/workflows/${workflow_id}/runs?per_page=100" --paginate \
+                -q '.workflow_runs[] | [.id, .status, .created_at] | @tsv' \
+                | sort -t $'\t' -k3,3r
+            )
+
+            if ((${#run_rows[@]} <= keep_count)); then
+              echo "Only ${#run_rows[@]} run(s) present — nothing to delete for ${workflow_path}"
+              return 0
+            fi
+
+            run_ids_to_delete=()
+            for row in "${run_rows[@]:keep_count}"; do
+              IFS=$'\t' read -r run_id status created_at <<< "${row}"
+              if [[ "${run_id}" == "${CURRENT_RUN_ID}" ]]; then
+                echo "Skipping current cleanup run ${run_id}"
+                continue
+              fi
+              case "${status}" in
+                in_progress|queued|waiting|pending|requested)
+                  echo "Skipping active run ${run_id} (${status})"
+                  continue
+                  ;;
+              esac
+              run_ids_to_delete+=("${run_id}")
+            done
+
+            for run_id in "${run_ids_to_delete[@]}"; do
+              echo "Deleting run ${run_id} from ${workflow_path}"
+              gh api --method DELETE "repos/${REPO}/actions/runs/${run_id}" >/dev/null || \
+                echo "Warning: could not delete run ${run_id}" >&2
+            done
+          }
+
+          prune_test_workflows() {
+            local keep_count="$1"
+            local workflow_path
+
+            mapfile -t test_workflows < <(
+              gh api "repos/${REPO}/actions/workflows" -q '.workflows[] | select(.path | test("test"; "i")) | .path'
+            )
+
+            if ((${#test_workflows[@]} == 0)); then
+              echo "No test workflows found"
+              return 0
+            fi
+
+            for workflow_path in "${test_workflows[@]}"; do
+              prune_workflow_runs "${workflow_path}" "${keep_count}"
+            done
+          }
+
+          prune_caches() {
+            local keep_count="$1"
+            local cache_id
+
+            mapfile -t cache_rows < <(
+              gh api "repos/${REPO}/actions/caches?per_page=100" --paginate \
+                -q '.actions_caches[] | [.id, .created_at] | @tsv' \
+                | sort -t $'\t' -k2,2r
+            )
+
+            if ((${#cache_rows[@]} <= keep_count)); then
+              echo "Only ${#cache_rows[@]} cache(s) present — nothing to delete"
+              return 0
+            fi
+
+            echo "Pruning caches, keeping ${keep_count} newest of ${#cache_rows[@]}"
+
+            for row in "${cache_rows[@]:keep_count}"; do
+              IFS=$'\t' read -r cache_id _created_at <<< "${row}"
+              echo "Deleting cache ${cache_id}"
+              gh api --method DELETE "repos/${REPO}/actions/caches/${cache_id}" >/dev/null || \
+                echo "Warning: could not delete cache ${cache_id}" >&2
+            done
+          }
+
+          echo "Repository: ${REPO}"
+          echo "Current run id: ${CURRENT_RUN_ID}"
+
+          prune_workflow_runs "build-desktop-app.yml" "${KEEP_RUNS}"
+          prune_test_workflows "${KEEP_RUNS}"
+          prune_caches "${KEEP_CACHES}"
+
+          echo "Cleanup complete"
