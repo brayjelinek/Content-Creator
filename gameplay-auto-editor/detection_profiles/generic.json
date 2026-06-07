@@ -24,5 +24,11 @@
     "low_health_bonus": 15,
     "audio_spike_bonus": 10,
     "chat_spike_bonus": 15
+  },
+  "effect_profiles": {
+    "default": {"zoom_factor": 1.15, "slowmo_source_seconds": 0.5},
+    "kills": {"zoom_factor": 1.18, "screen_shake": true},
+    "clutch plays": {"slowmo_source_seconds": 0.62, "zoom_factor": 1.16},
+    "fails": {"slowmo_enabled": false, "zoom_factor": 1.12}
   }
 }

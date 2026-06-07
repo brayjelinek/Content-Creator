@@ -89,6 +89,7 @@ def detect_highlights(analyses: Iterable[dict], video_duration: float, config: d
                 "source_frame": candidate.get("poster_frame_path") or candidate.get("frame_path"),
                 "source_clip": candidate.get("clip_path"),
                 "selection_mode": selection_mode,
+                "game_profile": str(config.get("game_profile", "generic")),
                 "raw_analysis": candidate,
             }
         )

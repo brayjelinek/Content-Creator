@@ -21,5 +21,10 @@
     "killfeed_bonus": 42,
     "low_health_bonus": 12,
     "audio_spike_bonus": 12
+  },
+  "effect_profiles": {
+    "default": {"zoom_factor": 1.17, "slowmo_source_seconds": 0.48},
+    "kills": {"zoom_factor": 1.2, "audio_boost_db": 4},
+    "clutch plays": {"slowmo_source_seconds": 0.6, "zoom_factor": 1.15}
   }
 }

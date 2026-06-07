@@ -20,6 +20,7 @@ from scripts.clip_cutter import (
     probe_has_audio,
 )
 from scripts.clip_metadata import quality_tier
+from scripts.detection_profiles import apply_profile_effect_tuning, load_profile
 from scripts.moment_validator import is_synthetic_fallback_highlight, is_validated_for_premium_effects, is_validated_for_slowmo
 from scripts.pipeline_validation import validate_filter_chain_ready, validate_font_path
 from scripts.ass_captions import build_ass_subtitle_path, escape_ass_filter_path
@@ -233,6 +234,9 @@ def _apply_tiered_viral_settings(highlight: dict, viral: dict) -> dict:
     if "fails" in categories or "deaths" in categories:
         tuned["slowmo_enabled"] = False
         tuned["zoom_factor"] = min(float(tuned.get("zoom_factor", 1.18)), 1.14)
+
+    profile = load_profile(str(highlight.get("game_profile", "generic")))
+    tuned = apply_profile_effect_tuning(tuned, profile, categories)
 
     return tuned
 

@@ -122,3 +122,27 @@ def merge_profile_weights(highlight_config: dict, profile: dict[str, Any]) -> di
     merged["weighted_scoring"] = weights
     merged["game_profile"] = profile.get("id", "generic")
     return merged
+
+
+def apply_profile_effect_tuning(
+    viral: dict[str, Any],
+    profile: dict[str, Any] | None,
+    categories: list[str],
+) -> dict[str, Any]:
+    """Merge per-game effect tuning from a detection profile."""
+    tuned = dict(viral)
+    profiles = dict((profile or {}).get("effect_profiles") or {})
+    if not profiles:
+        return tuned
+
+    selected = dict(profiles.get("default") or {})
+    for category in categories:
+        key = str(category).lower()
+        if key in profiles:
+            selected.update(profiles[key])
+            break
+
+    for key, value in selected.items():
+        if key in tuned:
+            tuned[key] = value
+    return tuned

@@ -667,6 +667,7 @@ class GameplayAutoEditorApp:
         combined_report: dict | None = None
         accumulated_clips: list[dict] = []
         accumulated_ready: list[str] = []
+        batch_errors: list[dict] = []
         try:
             with redirect_stdout(writer):
                 for index, video_path in enumerate(targets, start=1):
@@ -674,11 +675,16 @@ class GameplayAutoEditorApp:
                     self.output_queue.put(
                         ("EVENT", {"type": "progress", "stage": "batch", "percent": 0, "message": f"Batch video {index}/{len(targets)}..."})
                     )
-                    report = run_pipeline(
-                        video_path,
-                        config_override=settings,
-                        progress_callback=progress_callback,
-                    )
+                    try:
+                        report = run_pipeline(
+                            video_path,
+                            config_override=settings,
+                            progress_callback=progress_callback,
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        batch_errors.append({"video": str(video_path), "error": str(exc)})
+                        self.output_queue.put(f"[Batch] Failed on {video_path.name}: {exc}\n")
+                        continue
                     self.batch_reports.append(report)
                     accumulated_clips.extend(report.get("clips") or [])
                     accumulated_ready.extend(report.get("clips_ready") or [])
@@ -690,6 +696,17 @@ class GameplayAutoEditorApp:
                 combined_report["clips"] = accumulated_clips
                 combined_report["clips_ready"] = accumulated_ready
                 combined_report["clips_created"] = len(accumulated_clips)
+            elif batch_errors and not accumulated_clips:
+                combined_report = {
+                    "clips": [],
+                    "clips_ready": [],
+                    "clips_created": 0,
+                    "failure_reason": "batch_failed",
+                    "batch_errors": batch_errors,
+                }
+            if combined_report is not None and batch_errors:
+                combined_report["batch_errors"] = batch_errors
+                combined_report["batch_failed_count"] = len(batch_errors)
             self.output_queue.put(("DONE", combined_report or {}))
             if self.video_queue:
                 self.video_queue.clear()

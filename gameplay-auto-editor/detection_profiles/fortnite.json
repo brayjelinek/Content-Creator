@@ -20,5 +20,10 @@
     "killfeed_bonus": 38,
     "low_health_bonus": 14,
     "audio_spike_bonus": 10
+  },
+  "effect_profiles": {
+    "default": {"zoom_factor": 1.14, "slowmo_source_seconds": 0.5},
+    "kills": {"zoom_factor": 1.16, "screen_shake": true},
+    "high-action sequences": {"zoom_factor": 1.18, "slowmo_source_seconds": 0.55}
   }
 }
