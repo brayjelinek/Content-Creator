@@ -5,6 +5,7 @@ __pycache__/
 build/
 dist/
 *.spec
+build_info.json
 
 raw_clips/*
 !raw_clips/.gitkeep

@@ -16,6 +16,7 @@ from tkinter import DoubleVar, StringVar, Text, Tk
 from tkinter import ttk
 import tkinter as tk
 
+from scripts.build_info import format_build_label
 from scripts.clip_metadata import format_virality_subscores, quality_tier, summarize_enhancements
 from scripts.embedded_agent.advisor import EmbeddedAgentAdvisor
 from scripts.pipeline import PROJECT_ROOT, load_config, run_pipeline
@@ -76,6 +77,7 @@ class GameplayAutoEditorApp:
         self.report: dict | None = None
         self.progress_var = DoubleVar(value=0.0)
         self.stage_var = StringVar(value=copy.STATUS_IDLE)
+        self.build_label_var = StringVar(value=format_build_label())
 
         self.provider_var = StringVar(value=self._initial_provider())
         self.max_clips_var = StringVar(value=self._initial_max_clips())
@@ -146,6 +148,9 @@ class GameplayAutoEditorApp:
         title_block.pack(side=LEFT, fill="x", expand=True)
         ttk.Label(title_block, text=APP_TITLE, style="Title.TLabel").pack(anchor=W)
         ttk.Label(title_block, text=copy.HERO_SUBLINE, style="Subtitle.TLabel").pack(
+            anchor=W, pady=(AppTheme.SPACING_XS, 0)
+        )
+        ttk.Label(title_block, textvariable=self.build_label_var, style="Caption.TLabel").pack(
             anchor=W, pady=(AppTheme.SPACING_XS, 0)
         )
 
